@@ -1,0 +1,65 @@
+# Mis Finanzas
+
+Webapp personal (solo para vos) para cargar resúmenes de cuenta, categorizar movimientos con reglas automáticas, seguir tus inversiones y ver tu patrimonio total. Pensada para GitHub Pages, responsive (mobile + PC), con Google Sheets como base de datos.
+
+## Qué hace
+
+- **Movimientos**: importás resúmenes de MercadoPago, Santander, Amex y Visa (Excel o PDF). La app los normaliza, aplica reglas de autocategorización y te deja categorizar lo que quedó pendiente. También podés cargar movimientos a mano.
+- **Reglas**: cada vez que categorizás algo, podés crear una regla (por "contiene / empieza / igual / regex") para que la próxima vez se detecte solo.
+- **Inversiones**: importás la tenencia valorizada de PPI o Balanz (PDF) y ves tu cartera por activo y por tipo.
+- **Patrimonio**: suma cuentas + billeteras + inversiones + efectivo. La deuda de tarjetas se muestra aparte (no se resta).
+- **Monedas**: toggle ARS / USD / ambas, con cotización MEP del día (dolarapi.com).
+
+## Formatos soportados (detección automática)
+
+| Fuente | Formato | Qué se extrae |
+|---|---|---|
+| MercadoPago | `.xlsx` | Movimientos + saldo final |
+| Santander (caja de ahorro) | `.pdf` | Movimientos en $ y US$ + saldos |
+| Amex / Visa Santander | `.xlsx` | Consumos, cuotas, pagos + total a pagar |
+| PPI (Portfolio Personal) | `.pdf` (con clave) | Tenencia valorizada por especie |
+| Balanz | `.pdf` (Posición consolidada) | Tenencia valorizada por especie |
+
+> **Balanz**: exportá el reporte **"Posición consolidada / Tenencia"**, no el extracto de cuenta corriente (ese no tiene valuación).
+
+## Setup del backend (Google Apps Script) — una sola vez
+
+1. Entrá a [sheets.google.com](https://sheets.google.com) y creá una **planilla nueva** (será la base de datos). Podés llamarla "Mis Finanzas DB".
+2. En la planilla: menú **Extensiones → Apps Script**.
+3. Borrá todo el código de ejemplo y pegá el contenido de **`Code.gs`**. Guardá (Ctrl+S).
+4. Arriba a la derecha: **Implementar → Nueva implementación**.
+5. Engranaje ⚙ → tipo **Aplicación web**.
+6. Configurá: *Ejecutar como* = **Yo**; *Quién tiene acceso* = **Solo yo** (o "Cualquiera con el enlace" si querés abrirla desde el celu sin loguearte con la misma cuenta).
+7. **Implementar** → autorizá los permisos → copiá la **URL** que termina en `/exec`.
+8. Abrí la app, andá a **Config**, pegá esa URL y tocá **Guardar y conectar**.
+
+Las pestañas (Movimientos, Reglas, Cuentas, Inversiones, Config) se crean solas en la planilla la primera vez.
+
+## Publicar en GitHub Pages
+
+1. Creá un repo (privado o público) y subí `index.html` a la raíz.
+2. En el repo: **Settings → Pages → Source: Deploy from a branch → main / root**.
+3. Abrí la URL `https://<usuario>.github.io/<repo>/`.
+4. En Config pegá la URL del backend. Listo — la URL y tus preferencias quedan guardadas en el navegador.
+
+> Como los datos viven en tu Google Sheet (no en el repo), podés tener el repo público sin exponer tu información. Si querés doble candado, hacé el repo privado.
+
+## Uso diario
+
+1. Descargá el resumen de tu banco/billetera/tarjeta (Excel donde puedas, PDF si no).
+2. **Movimientos → Importar** → arrastrá el archivo → revisá la previsualización (los duplicados vienen destildados) → **Importar seleccionados**.
+3. Categorizá lo pendiente. Al guardar, tildá "crear regla" para automatizar la próxima.
+4. Para inversiones: **Inversiones → Importar** el PDF de PPI/Balanz (reemplaza la tenencia de ese broker).
+
+## Notas técnicas
+
+- Un solo `index.html` autocontenido. Librerías desde CDN: **SheetJS** (Excel), **pdf.js** (PDF), **dolarapi** (MEP).
+- Dedupe por hash `fecha|monto|descripción|cuenta`: reimportar el mismo resumen no duplica.
+- El backend usa `text/plain` en el POST para evitar el preflight CORS de Apps Script.
+- Todo es de un solo usuario: no hay login ni "compartido" como en gastos-mb.
+
+## Archivos
+
+- `index.html` — la app (subir a GitHub Pages).
+- `Code.gs` — backend para pegar en Apps Script.
+- `README.md` — este archivo.
