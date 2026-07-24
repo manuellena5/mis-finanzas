@@ -183,6 +183,7 @@ const catColor = c => (CATS.find(x=>x[0]===c)||[,"#94a3b8"])[1];
 const state = {
   apiUrl: localStorage.getItem("mf_apiurl") || "",
   cur: localStorage.getItem("mf_cur") || "ARS",           // ARS | USD | ambas
+  cardLens: localStorage.getItem("mf_lens") || "consumo", // consumo | resumen | pago
   mep: JSON.parse(localStorage.getItem("mf_mep") || "null"), // {compra,venta,fecha}
   tab: "movimientos",
   movimientos: [], reglas: [], cuentas: [], inversiones: [], config: {},
@@ -338,6 +339,14 @@ function isoDate(f){
 // Formato de visualización DD/MM/YYYY
 function dispDate(f){ const s=isoDate(f); const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); return m?`${m[3]}/${m[2]}/${m[1]}`:s; }
 function hashMov(m){ return `${m.fecha}|${Math.round(m.monto*100)}|${(m.descripcion||"").slice(0,40).toLowerCase()}|${m.cuenta}`; }
+// Deriva el período (YYYY-MM) del resumen a partir de la fecha de cierre:
+// cierre a principio de mes (día < 15) => el resumen corresponde al mes anterior.
+function periodoDesdeCierre(iso){
+  const m=String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})/); if(!m) return "";
+  let y=+m[1], mo=+m[2], d=+m[3];
+  if(d<15){ mo--; if(mo<1){mo=12;y--;} }
+  return `${y}-${String(mo).padStart(2,"0")}`;
+}
 
 function tipoDesde(desc, monto){
   const d=(desc||"").toLowerCase();
@@ -369,10 +378,13 @@ const Parsers = {
 
   /* Tarjeta Santander (Amex/Visa) xlsx */
   tarjeta(aoa, nombre){
-    const movs=[]; let inmov=false, lastDate="", totalPesos=null, totalUsd=null, seenTotalHdr=false;
+    const movs=[]; let inmov=false, lastDate="", totalPesos=null, totalUsd=null, cierre="", venc="";
     for(let i=0;i<aoa.length;i++){
       const r=aoa[i]; const c0=String(r[0]||"").trim();
       if(c0==="Total a pagar"){ const nx=aoa[i+1]||[]; totalPesos=parseNum(nx[0]); totalUsd=parseNum(nx[1]); }
+      if(c0==="Fecha de cierre" && !cierre){ const nx=aoa[i+1]||[]; cierre=ddmmaaaa(String(nx[0]||"")); venc=ddmmaaaa(String(nx[1]||"")); }
+      if(!cierre){ const mc=c0.match(/Cierre:\s*(\d{2}\/\d{2}\/\d{4})/); if(mc) cierre=ddmmaaaa(mc[1]); }
+      if(!venc){ const mv=c0.match(/Vencimiento:\s*(\d{2}\/\d{2}\/\d{4})/); if(mv) venc=ddmmaaaa(mv[1]); }
       if(c0.startsWith("Fecha") && String(r[1]||"").startsWith("Descrip")){ inmov=true; continue; }
       if(c0.startsWith("Total de ")){ inmov=false; continue; }
       if(c0.startsWith("Otros conceptos")){ inmov=false; }
@@ -392,7 +404,9 @@ const Parsers = {
       }
     }
     // Nota: en tarjeta el consumo viene positivo = gasto; pagos vienen negativos
-    return {movs, meta:{cuenta:nombre, tipo:"tarjeta", totalPesos, totalUsd}};
+    const periodo = periodoDesdeCierre(cierre);
+    movs.forEach(m=>{ m.periodo=periodo; m.fechaPago=venc; });
+    return {movs, meta:{cuenta:nombre, tipo:"tarjeta", totalPesos, totalUsd, cierre, vencimiento:venc, periodo}};
   },
 
   /* Santander caja de ahorro (PDF) */
@@ -538,24 +552,37 @@ function viewNoApi(){
 const MESES_ES=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
 function mesLabel(ym){ if(!ym||ym==="todos") return "Todos los meses"; const [y,m]=ym.split("-"); return `${MESES_ES[(+m)-1]} ${y}`; }
 let movFilter = {q:"", estado:"todos", cuenta:"todas", mes:undefined};
-function mesesDisponibles(){ return [...new Set(state.movimientos.map(m=>isoDate(m.fecha).slice(0,7)))].filter(s=>/^\d{4}-\d{2}$/.test(s)).sort().reverse(); }
+// Mes de imputación de un movimiento según la lente elegida (solo cambia para tarjeta)
+function movMesKey(m){
+  if(state.cardLens==="resumen" && m.periodo) return m.periodo;
+  if(state.cardLens==="pago" && m.fechaPago) return isoDate(m.fechaPago).slice(0,7);
+  return isoDate(m.fecha).slice(0,7);
+}
+function mesesDisponibles(){ return [...new Set(state.movimientos.map(movMesKey))].filter(s=>/^\d{4}-\d{2}$/.test(s)).sort().reverse(); }
 function viewMovimientos(){
   const meses = mesesDisponibles();
   if(movFilter.mes===undefined) movFilter.mes = meses[0] || "todos";   // arranca en el último mes con datos
   const movs = filteredMovs();
   const pend = state.movimientos.filter(m=>m.estado!=="categorizado").length;
   const cuentas = [...new Set(state.movimientos.map(m=>m.cuenta))].filter(Boolean);
-  const enMes = m => movFilter.mes==="todos" || isoDate(m.fecha).slice(0,7)===movFilter.mes;
+  const enMes = m => movFilter.mes==="todos" || movMesKey(m)===movFilter.mes;
+  const hayTarjeta = state.movimientos.some(m=>m.periodo);
   const gastoMes = state.movimientos.filter(m=>enMes(m)&&signo(m)<0);
   const ingMes   = state.movimientos.filter(m=>enMes(m)&&signo(m)>0);
   const lblMes = movFilter.mes==="todos" ? "(todos)" : mesLabel(movFilter.mes);
   return `
   <div class="flexbtw"><h2 class="tab-title">Movimientos</h2>
     <button class="btn primary sm" id="btnImport">⬆ Importar</button></div>
-  <div style="margin-bottom:12px"><select class="f" id="movMes" style="max-width:220px">
-    <option value="todos" ${movFilter.mes==="todos"?"selected":""}>Todos los meses</option>
-    ${meses.map(ym=>`<option value="${ym}" ${movFilter.mes===ym?"selected":""}>${mesLabel(ym)}</option>`).join("")}
-  </select></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+    <select class="f" id="movMes" style="max-width:200px">
+      <option value="todos" ${movFilter.mes==="todos"?"selected":""}>Todos los meses</option>
+      ${meses.map(ym=>`<option value="${ym}" ${movFilter.mes===ym?"selected":""}>${mesLabel(ym)}</option>`).join("")}
+    </select>
+    ${hayTarjeta?`<div class="curtoggle" id="lensToggle" title="Cómo se imputa el mes de los consumos de tarjeta">
+      ${[["consumo","Consumo"],["resumen","Resumen"],["pago","Pago"]].map(([v,l])=>`<button data-lens="${v}" class="${state.cardLens===v?'on':''}">${l}</button>`).join("")}
+    </div>`:""}
+  </div>
+  ${hayTarjeta?`<div class="faint" style="font-size:11.5px;margin:-6px 2px 12px">Tarjeta imputada por ${state.cardLens==="consumo"?"fecha de consumo":state.cardLens==="resumen"?"período del resumen":"fecha de pago"}.</div>`:""}
   <div class="stat-grid">
     <div class="stat"><div class="lbl">Gasto · ${lblMes}</div><div class="val" style="color:var(--danger)">${fmtTotal(sumIn(gastoMes.map(absItem),state.cur==='USD'?'USD':'ARS'))}</div><div class="sub">${gastoMes.length} movs</div></div>
     <div class="stat"><div class="lbl">Ingresos · ${lblMes}</div><div class="val" style="color:var(--green-med)">${fmtTotal(sumIn(ingMes.map(absItem),state.cur==='USD'?'USD':'ARS'))}</div><div class="sub">${ingMes.length} movs</div></div>
@@ -578,7 +605,7 @@ function signo(m){ if(/Ingreso|Rendimiento/i.test(m.tipo)) return 1; if(m.monto<
 function esMesActual(f){ if(!f) return false; const d=new Date(); return f.slice(0,7)===d.toISOString().slice(0,7); }
 function filteredMovs(){
   let l=state.movimientos.slice();
-  if(movFilter.mes && movFilter.mes!=="todos") l=l.filter(m=>isoDate(m.fecha).slice(0,7)===movFilter.mes);
+  if(movFilter.mes && movFilter.mes!=="todos") l=l.filter(m=>movMesKey(m)===movFilter.mes);
   if(movFilter.estado==="pendientes") l=l.filter(m=>m.estado!=="categorizado");
   if(movFilter.estado==="categorizados") l=l.filter(m=>m.estado==="categorizado");
   if(movFilter.cuenta!=="todas") l=l.filter(m=>m.cuenta===movFilter.cuenta);
@@ -722,6 +749,7 @@ function bindContent(){
   const bi=$("#btnImport"); if(bi) bi.onclick=openImport;
   // filtros movimientos
   const mm=$("#movMes"); if(mm) mm.onchange=()=>{ movFilter.mes=mm.value; render(); };
+  const lt=$("#lensToggle"); if(lt) lt.querySelectorAll("button").forEach(b=> b.onclick=()=>{ state.cardLens=b.dataset.lens; localStorage.setItem("mf_lens",state.cardLens); movFilter.mes=undefined; render(); });
   c.querySelectorAll("[data-est]").forEach(b=>b.onclick=()=>{movFilter.estado=b.dataset.est;render();});
   c.querySelectorAll("[data-cta]").forEach(b=>b.onclick=()=>{movFilter.cuenta=b.dataset.cta;render();});
   const ms=$("#movSearch"); if(ms){ ms.oninput=()=>{movFilter.q=ms.value;}; ms.onkeyup=e=>{ if(e.key==="Enter"){render();$("#movSearch").focus();}}; ms.onblur=()=>render(); }
@@ -772,6 +800,10 @@ function openMovModal(m){
       <div><label class="f">Categoría</label><select class="f" id="m_cat"><option value="">— sin categoría —</option>${catOptions(m.categoria)}</select></div>
       <div><label class="f">Tipo</label><select class="f" id="m_tipo">${["Gasto","Ingresos","Transferencias","Pago tarjeta","Rendimientos","Inversiones"].map(t=>`<option ${t===m.tipo?'selected':''}>${t}</option>`).join("")}</select></div>
     </div>
+    ${(m.periodo || /amex|visa|tarjeta/i.test(m.cuenta||""))?`<div class="row2">
+      <div><label class="f">Período resumen</label><input class="f" type="month" id="m_periodo" value="${esc(m.periodo||'')}"></div>
+      <div><label class="f">Fecha de pago</label><input class="f" type="date" id="m_pago" value="${esc(isoDate(m.fechaPago||''))}"></div>
+    </div>`:""}
     <label class="f"><input type="checkbox" id="m_regla" style="width:auto;margin-right:6px">Crear regla para autocategorizar descripciones similares</label>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button class="btn primary block" id="m_save">Guardar</button>
@@ -787,6 +819,8 @@ function openMovModal(m){
       categoria:$("#m_cat",o).value, tipo:$("#m_tipo",o).value,
       estado: $("#m_cat",o).value ? "categorizado":"pendiente"
     };
+    const pe=$("#m_periodo",o); if(pe) upd.periodo=pe.value;
+    const pg=$("#m_pago",o); if(pg) upd.fechaPago=pg.value;
     upd.hash = upd.hash || hashMov(upd);
     await api({action:isNew?"save":"update", mov:upd});
     if(isNew) state.movimientos.unshift(upd); else state.movimientos=state.movimientos.map(x=>x.id===upd.id?upd:x);
@@ -908,20 +942,28 @@ function importMovimientos(results, body, o){
   // aplicar reglas + marcar duplicados
   const existingHashes=new Set(state.movimientos.map(m=>m.hash));
   const rows=[];
-  results.forEach(r=>{
+  results.forEach((r,ri)=>{
     r.movs.forEach(m=>{
-      m.fuente="import"; m.estado="pendiente"; m.id=uid();
+      m.fuente="import"; m.estado="pendiente"; m.id=uid(); m._ri=ri;
       aplicarReglas(m);
       m.hash=hashMov(m);
       m._dup = existingHashes.has(m.hash);
       rows.push(m);
-      // actualizar saldo de cuenta si el resumen lo trae
     });
   });
   importState={rows, results};
   const nDup=rows.filter(r=>r._dup).length;
+  // Editor de período para resúmenes de tarjeta
+  const cardEditors = results.map((r,ri)=> (r.meta && r.meta.tipo==="tarjeta")
+    ? `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;flex-wrap:wrap">
+        <span class="tag">${esc(r.meta.cuenta||'Tarjeta')}</span>
+        <label class="faint" style="font-size:12px">Período del resumen:</label>
+        <input type="month" data-per="${ri}" value="${esc(r.meta.periodo||'')}" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:13px">
+        ${r.meta.cierre?`<span class="faint" style="font-size:11px">cierre ${esc(dispDate(r.meta.cierre))}${r.meta.vencimiento?` · vence ${esc(dispDate(r.meta.vencimiento))}`:''}</span>`:''}
+      </div>` : "").join("");
   let html=`<div class="card" style="margin-top:12px">
     <div class="flexbtw"><div class="section-title" style="margin:0">${rows.length} movimientos${nDup?` · ${nDup} ya existen`:""}</div></div>
+    ${cardEditors?`<div style="margin:8px 0 4px">${cardEditors}</div>`:""}
     <div style="max-height:46vh;overflow:auto;margin-top:8px"><table class="tbl"><thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Categoría</th></tr></thead><tbody>
     ${rows.map((m,i)=>`<tr class="${m._dup?'dup':''}">
       <td><input type="checkbox" data-k="${i}" ${m._dup?'':'checked'}></td>
@@ -934,12 +976,13 @@ function importMovimientos(results, body, o){
     <button class="btn primary block" id="impConfirm" style="margin-top:12px">Importar seleccionados</button></div>`;
   body.insertAdjacentHTML("beforeend", html);
   body.querySelectorAll("[data-cat]").forEach(sel=> sel.onchange=()=>{ const i=+sel.dataset.cat; importState.rows[i].categoria=sel.value; importState.rows[i].estado=sel.value?"categorizado":"pendiente"; });
+  body.querySelectorAll("[data-per]").forEach(inp=> inp.onchange=()=>{ const ri=+inp.dataset.per; importState.rows.forEach(m=>{ if(m._ri===ri) m.periodo=inp.value; }); });
   $("#impConfirm").onclick=async()=>{
     const checks=body.querySelectorAll("[data-k]");
     const sel=[]; checks.forEach(ch=>{ if(ch.checked) sel.push(importState.rows[+ch.dataset.k]); });
     if(!sel.length){ toast("Nada seleccionado"); return; }
     $("#impConfirm").innerHTML='<span class="spin"></span> Guardando…';
-    const clean=sel.map(m=>({fecha:m.fecha,descripcion:m.descripcion,moneda:m.moneda,monto:m.monto,tipo:m.tipo,categoria:m.categoria,subcategoria:m.subcategoria||"",cuenta:m.cuenta,fuente:"import",estado:m.estado,cuotas:m.cuotas||"",hash:m.hash,id:m.id}));
+    const clean=sel.map(m=>({fecha:m.fecha,descripcion:m.descripcion,moneda:m.moneda,monto:m.monto,tipo:m.tipo,categoria:m.categoria,subcategoria:m.subcategoria||"",cuenta:m.cuenta,fuente:"import",estado:m.estado,cuotas:m.cuotas||"",hash:m.hash,id:m.id,periodo:m.periodo||"",fechaPago:m.fechaPago||""}));
     const res=await api({action:"saveBatch", movs:clean});
     // actualizar saldos de cuentas desde metadata
     await upsertCuentasFromImport(importState.results);

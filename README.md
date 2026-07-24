@@ -51,6 +51,16 @@ Las pestañas (Movimientos, Reglas, Cuentas, Inversiones, Config) se crean solas
 3. Categorizá lo pendiente. Al guardar, tildá "crear regla" para automatizar la próxima.
 4. Para inversiones: **Inversiones → Importar** el PDF de PPI/Balanz (reemplaza la tenencia de ese broker).
 
+## Tarjetas: consumo vs. resumen vs. pago
+
+Un consumo de tarjeta tiene tres fechas distintas. Ejemplo: comprás el **30/5**, cae en el **resumen de junio** (cierre 02/07) y lo pagás en **julio**. La app guarda las tres y podés elegir cómo verlo con el toggle **Consumo / Resumen / Pago** en Movimientos:
+
+- **Consumo** (por defecto): el gasto cuenta en el mes en que lo hiciste (mayo). Refleja tus hábitos reales.
+- **Resumen**: cuenta en el período del resumen (junio), como lo muestra el banco. Sirve para reconciliar.
+- **Pago**: cuenta cuando pagás (julio). Mirada de flujo de caja.
+
+Al importar una tarjeta, el **período del resumen** se deduce de la fecha de cierre (cierre a principio de mes ⇒ mes anterior) y podés editarlo antes de confirmar.
+
 ## Notas técnicas
 
 - Un solo `index.html` autocontenido. Librerías desde CDN: **SheetJS** (Excel), **pdf.js** (PDF), **dolarapi** (MEP).
