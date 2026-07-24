@@ -21,7 +21,7 @@ const CONFIG_SHEET = "Config";
 const MOV_COLS = [
   "Fecha","Descripcion","Moneda","Monto","Tipo",
   "Categoria","Subcategoria","Cuenta","Fuente","Estado",
-  "Cuotas","Observaciones","Hash","ID","Periodo","FechaPago"
+  "Cuotas","Observaciones","Hash","ID","Periodo","FechaPago","CuentaDestino"
 ];
 const REGLAS_COLS  = ["patron","tipoPatron","categoria","subcategoria","tipo","cuenta","prioridad","hits","id"];
 const CUENTAS_COLS = ["nombre","tipo","moneda","saldo","enPatrimonio","fechaSaldo","id"];
@@ -106,7 +106,7 @@ function movToRow(m) {
     m.fecha, m.descripcion, m.moneda, Number(m.monto), m.tipo || "",
     m.categoria || "", m.subcategoria || "", m.cuenta || "", m.fuente || "manual",
     m.estado || "pendiente", m.cuotas || "", m.observaciones || "",
-    m.hash || "", m.id, m.periodo || "", m.fechaPago || ""
+    m.hash || "", m.id, m.periodo || "", m.fechaPago || "", m.cuentaDestino || ""
   ];
 }
 function rowToMov(r) {
@@ -115,7 +115,7 @@ function rowToMov(r) {
     tipo:String(r[4]||""), categoria:String(r[5]||""), subcategoria:String(r[6]||""),
     cuenta:String(r[7]||""), fuente:String(r[8]||""), estado:String(r[9]||""),
     cuotas:String(r[10]||""), observaciones:String(r[11]||""), hash:String(r[12]||""), id:String(r[13]),
-    periodo:String(r[14]||""), fechaPago:String(r[15]||"")
+    periodo:String(r[14]||""), fechaPago:String(r[15]||""), cuentaDestino:String(r[16]||"")
   };
 }
 function listMov() {

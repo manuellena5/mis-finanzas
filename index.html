@@ -248,21 +248,40 @@ async function loadAll(){
   state.loaded=true;
 }
 
-/* Cotización MEP (dolarapi.com, gratis, sin key) */
+/* Cotización del dólar — varias fuentes en cascada (todas gratis, sin key) */
+const MEP_SOURCES = [
+  {n:"MEP", url:"https://dolarapi.com/v1/dolares/mep",                         pick:d=>({compra:+d.compra, venta:+d.venta, fecha:(d.fechaActualizacion||"").slice(0,10)})},
+  {n:"MEP", url:"https://api.argentinadatos.com/v1/cotizaciones/dolares/mep",  pick:d=>({compra:+d.compra, venta:+d.venta, fecha:(d.fecha||"").slice(0,10)})},
+  {n:"Blue",url:"https://api.bluelytics.com.ar/v2/latest",                     pick:d=>({compra:+d.blue.value_buy, venta:+d.blue.value_sell, fecha:(d.last_update||"").slice(0,10)})},
+];
 async function fetchMep(silent){
-  try{
-    const r = await fetch("https://dolarapi.com/v1/dolares/mep");
-    const d = await r.json();
-    state.mep = {compra:d.compra, venta:d.venta, fecha:(d.fechaActualizacion||"").slice(0,10)};
-    localStorage.setItem("mf_mep", JSON.stringify(state.mep));
-    renderMep();
-    if(!silent) toast("Cotización MEP actualizada");
-  }catch(e){ if(!silent) toast("No se pudo obtener la cotización"); }
+  for(const s of MEP_SOURCES){
+    try{
+      const r = await fetch(s.url, {cache:"no-store"});
+      if(!r.ok) continue;
+      const m = s.pick(await r.json());
+      if(m && m.venta>0){
+        state.mep = {...m, fuente:s.n, manual:false};
+        localStorage.setItem("mf_mep", JSON.stringify(state.mep));
+        renderMep();
+        if(!silent) toast(`Dólar ${s.n} actualizado: $${nf(m.venta)}`);
+        return true;
+      }
+    }catch(e){ /* probar siguiente fuente */ }
+  }
+  if(!silent) toast("No se pudo obtener la cotización online. Cargala manualmente en Config.");
+  return false;
+}
+function setMepManual(venta){
+  const v=parseFloat(venta); if(!v||v<=0){ toast("Valor inválido"); return; }
+  state.mep = {compra:v, venta:v, fecha:new Date().toISOString().slice(0,10), fuente:"Manual", manual:true};
+  localStorage.setItem("mf_mep", JSON.stringify(state.mep));
+  renderMep(); render(); toast("Cotización manual guardada");
 }
 function renderMep(){
   const c=$("#mepChip");
-  if(state.mep) c.textContent = "MEP $"+nf(state.mep.venta);
-  else c.textContent = "MEP —";
+  if(state.mep){ c.textContent = (state.mep.fuente||"USD")+" $"+nf(state.mep.venta); c.title=`1 USD = $${nf(state.mep.venta)} (${state.mep.fuente||''} ${state.mep.fecha||''}) — clic para actualizar`; }
+  else c.textContent = "Dólar —";
 }
 
 /* ══════════════════════ MOTOR DE REGLAS ══════════════════════ */
@@ -601,7 +620,12 @@ function viewMovimientos(){
   ${movs.length>300?`<div class="faint" style="text-align:center;padding:12px">Mostrando 300 de ${movs.length}</div>`:""}`;
 }
 const absItem = m => ({monto:Math.abs(m.monto), moneda:m.moneda});
-function signo(m){ if(/Ingreso|Rendimiento/i.test(m.tipo)) return 1; if(m.monto<0 && /Pago tarjeta/i.test(m.tipo)) return 1; return m.monto<0?-1:(/Gasto|Transferenc|Pago/i.test(m.tipo)? -1 : 1); }
+// signo: -1 egreso, +1 ingreso, 0 neutral (no cuenta en KPIs)
+function signo(m){
+  if(/transferencia interna|pago tarjeta/i.test(m.tipo)) return 0; // movimiento entre cuentas propias / pago de tarjeta (ya contado en los consumos)
+  if(/Ingreso|Rendimiento/i.test(m.tipo)) return 1;
+  return m.monto<0 ? -1 : (/Gasto|Transferenc/i.test(m.tipo)? -1 : 1);
+}
 function esMesActual(f){ if(!f) return false; const d=new Date(); return f.slice(0,7)===d.toISOString().slice(0,7); }
 function filteredMovs(){
   let l=state.movimientos.slice();
@@ -613,15 +637,20 @@ function filteredMovs(){
   return l;
 }
 function movRow(m){
-  const pos = signo(m)>0;
-  const cat = m.categoria ? `<span class="tag" style="background:${catColor(m.categoria)}22;color:${catColor(m.categoria)}"><span class="dot" style="background:${catColor(m.categoria)}"></span>${esc(m.categoria)}</span>` : `<span class="tag pend">sin categoría</span>`;
+  const sg = signo(m);
+  const interna = /transferencia interna/i.test(m.tipo);
+  const cat = interna
+    ? `<span class="tag" style="background:#e0e7ff;color:#4f46e5">↔ ${esc(m.cuenta)}${m.cuentaDestino?` → ${esc(m.cuentaDestino)}`:""}</span>`
+    : (m.categoria ? `<span class="tag" style="background:${catColor(m.categoria)}22;color:${catColor(m.categoria)}"><span class="dot" style="background:${catColor(m.categoria)}"></span>${esc(m.categoria)}</span>` : `<span class="tag pend">sin categoría</span>`);
+  const amtCls = sg>0?'pos':(sg<0?'neg':'');
+  const signChar = sg>0?'+':(sg<0?'–':'↔ ');
   return `<div class="mov" data-id="${m.id}">
     <div style="flex:1;min-width:0">
       <div class="desc">${esc(m.descripcion)}</div>
       <div class="meta">${cat}<span class="tag">${esc(m.cuenta)}</span></div>
       <div class="date">${esc(dispDate(m.fecha))}</div>
     </div>
-    <div class="amt"><div class="n ${pos?'pos':'neg'}">${pos?'+':'–'}${showAmt(Math.abs(m.monto),m.moneda).replace(/^[+\-–]/,'')}</div>
+    <div class="amt"><div class="n ${amtCls}" ${sg===0?'style="color:var(--muted)"':''}>${signChar}${showAmt(Math.abs(m.monto),m.moneda).replace(/^[+\-–]/,'')}</div>
       ${state.cur==="ambas"?"":`<div class="sub">${m.moneda}</div>`}</div>
   </div>`;
 }
@@ -721,8 +750,11 @@ function viewConfig(){
     <div class="faint" style="font-size:12px;margin-top:8px">${state.apiUrl?"✅ Conectado · "+nMov+" movs · "+nReg+" reglas · "+nInv+" tenencias":"Sin conectar. Ver README para desplegar el backend."}</div>
   </div>
   <div class="card" style="margin-bottom:14px">
-    <div class="flexbtw"><span class="section-title" style="margin:0">Cotización MEP</span><button class="btn ghost sm" id="cfgMep">Actualizar</button></div>
-    <div style="margin-top:6px">${state.mep?`1 USD = $${nf(state.mep.venta)} <span class="faint">(${esc(state.mep.fecha)})</span>`:"Sin datos"}</div>
+    <div class="flexbtw"><span class="section-title" style="margin:0">Cotización del dólar</span><button class="btn ghost sm" id="cfgMep">Actualizar online</button></div>
+    <div style="margin:6px 0 10px">${state.mep?`1 USD = <b>$${nf(state.mep.venta)}</b> <span class="faint">(${esc(state.mep.fuente||'')} ${esc(state.mep.fecha||'')})</span>`:"Sin datos"}</div>
+    <label class="f">Cargar manualmente (1 USD = $)</label>
+    <div style="display:flex;gap:8px"><input class="f" type="number" step="0.01" id="cfgMepManual" placeholder="${state.mep?nf(state.mep.venta):'1500'}" style="max-width:180px"><button class="btn ghost sm" id="cfgMepSet">Fijar</button></div>
+    <div class="faint" style="font-size:11.5px;margin-top:6px">Si la carga online falla (algunas redes bloquean las APIs), fijá el valor a mano. Fuentes: dólar MEP y, como respaldo, dólar Blue.</div>
   </div>
   <div class="card" style="margin-bottom:14px">
     <div class="section-title" style="margin-top:0">Reglas de autocategorización (${nReg})</div>
@@ -763,6 +795,7 @@ function bindContent(){
   const cs=$("#cfgSave"); if(cs) cs.onclick=saveApiUrl;
   const ct=$("#cfgTest"); if(ct) ct.onclick=testApi;
   const cm=$("#cfgMep"); if(cm) cm.onclick=()=>fetchMep(false);
+  const cms=$("#cfgMepSet"); if(cms) cms.onclick=()=>setMepManual($("#cfgMepManual").value);
   const br=$("#btnReload"); if(br) br.onclick=async()=>{ br.innerHTML='<span class="spin"></span>'; await loadAll(); render(); toast("Datos actualizados"); };
   const be=$("#btnExport"); if(be) be.onclick=exportCsv;
   const bnr=$("#btnNuevaRegla"); if(bnr) bnr.onclick=()=>openReglaModal(null);
@@ -798,7 +831,12 @@ function openMovModal(m){
     </div>
     <div class="row2">
       <div><label class="f">Categoría</label><select class="f" id="m_cat"><option value="">— sin categoría —</option>${catOptions(m.categoria)}</select></div>
-      <div><label class="f">Tipo</label><select class="f" id="m_tipo">${["Gasto","Ingresos","Transferencias","Pago tarjeta","Rendimientos","Inversiones"].map(t=>`<option ${t===m.tipo?'selected':''}>${t}</option>`).join("")}</select></div>
+      <div><label class="f">Tipo</label><select class="f" id="m_tipo">${["Gasto","Ingresos","Transferencia interna","Transferencias","Pago tarjeta","Rendimientos","Inversiones"].map(t=>`<option ${t===m.tipo?'selected':''}>${t}</option>`).join("")}</select></div>
+    </div>
+    <div id="m_transfBox" style="${/transferencia interna/i.test(m.tipo)?'':'display:none'}">
+      <label class="f">Cuenta contraparte <span class="faint">(a/desde dónde fue el dinero)</span></label>
+      <select class="f" id="m_ctaDest"><option value="">—</option>${cuentas.map(c=>`<option ${c===m.cuentaDestino?'selected':''}>${esc(c)}</option>`).join("")}</select>
+      <div class="faint" style="font-size:11.5px;margin-top:5px">Las transferencias internas no cuentan como ingreso ni gasto.</div>
     </div>
     ${(m.periodo || /amex|visa|tarjeta/i.test(m.cuenta||""))?`<div class="row2">
       <div><label class="f">Período resumen</label><input class="f" type="month" id="m_periodo" value="${esc(m.periodo||'')}"></div>
@@ -809,6 +847,7 @@ function openMovModal(m){
       <button class="btn primary block" id="m_save">Guardar</button>
       ${isNew?"":`<button class="btn ghost" id="m_del">🗑</button>`}
     </div>`);
+  $("#m_tipo",o).onchange=()=>{ $("#m_transfBox",o).style.display = /transferencia interna/i.test($("#m_tipo",o).value) ? "" : "none"; };
   $("#m_save",o).onclick=async()=>{
     const btn=$("#m_save",o); if(btn.disabled) return;
     btn.disabled=true; btn.innerHTML='<span class="spin"></span> Guardando…';
@@ -817,10 +856,11 @@ function openMovModal(m){
       fecha:$("#m_fecha",o).value, cuenta:$("#m_cuenta",o).value, descripcion:$("#m_desc",o).value,
       monto:parseFloat($("#m_monto",o).value)||0, moneda:$("#m_moneda",o).value,
       categoria:$("#m_cat",o).value, tipo:$("#m_tipo",o).value,
-      estado: $("#m_cat",o).value ? "categorizado":"pendiente"
+      estado: ($("#m_cat",o).value || $("#m_tipo",o).value==="Transferencia interna") ? "categorizado":"pendiente"
     };
     const pe=$("#m_periodo",o); if(pe) upd.periodo=pe.value;
     const pg=$("#m_pago",o); if(pg) upd.fechaPago=pg.value;
+    const cd2=$("#m_ctaDest",o); upd.cuentaDestino = (upd.tipo==="Transferencia interna" && cd2) ? cd2.value : "";
     upd.hash = upd.hash || hashMov(upd);
     await api({action:isNew?"save":"update", mov:upd});
     if(isNew) state.movimientos.unshift(upd); else state.movimientos=state.movimientos.map(x=>x.id===upd.id?upd:x);
@@ -866,10 +906,14 @@ function openReglaModal(r){
     <label class="f">Patrón (texto a buscar en la descripción)</label><input class="f" id="r_pat" value="${esc(r.patron)}">
     <div class="row2"><div><label class="f">Tipo de match</label><select class="f" id="r_tp">${["contiene","empieza","igual","regex"].map(t=>`<option ${t===r.tipoPatron?'selected':''}>${t}</option>`).join("")}</select></div>
       <div><label class="f">Prioridad</label><input class="f" type="number" id="r_prio" value="${r.prioridad||10}"></div></div>
-    <label class="f">Categoría</label><select class="f" id="r_cat"><option value="">—</option>${catOptions(r.categoria)}</select>
+    <div class="row2">
+      <div><label class="f">Categoría</label><select class="f" id="r_cat"><option value="">—</option>${catOptions(r.categoria)}</select></div>
+      <div><label class="f">Tipo (opcional)</label><select class="f" id="r_tipo"><option value="">—</option>${["Gasto","Ingresos","Transferencia interna","Transferencias","Pago tarjeta","Rendimientos","Inversiones"].map(t=>`<option ${t===r.tipo?'selected':''}>${t}</option>`).join("")}</select></div>
+    </div>
+    <div class="faint" style="font-size:11.5px;margin-top:6px">Ej: patrón "manuel alejandro ellena" → Tipo "Transferencia interna" marca tus movimientos entre cuentas propias.</div>
     <div style="display:flex;gap:8px;margin-top:16px"><button class="btn primary block" id="r_save">Guardar</button></div>`);
   $("#r_save",o).onclick=async()=>{
-    const upd={...r, patron:$("#r_pat",o).value, tipoPatron:$("#r_tp",o).value, prioridad:parseInt($("#r_prio",o).value)||0, categoria:$("#r_cat",o).value};
+    const upd={...r, patron:$("#r_pat",o).value, tipoPatron:$("#r_tp",o).value, prioridad:parseInt($("#r_prio",o).value)||0, categoria:$("#r_cat",o).value, tipo:$("#r_tipo",o).value};
     await api({action:"saveReglas",reglas:[upd]});
     state.reglas = isNew? state.reglas.concat(upd) : state.reglas.map(x=>x.id===upd.id?upd:x);
     o.remove(); render(); toast("Regla guardada");
@@ -982,7 +1026,7 @@ function importMovimientos(results, body, o){
     const sel=[]; checks.forEach(ch=>{ if(ch.checked) sel.push(importState.rows[+ch.dataset.k]); });
     if(!sel.length){ toast("Nada seleccionado"); return; }
     $("#impConfirm").innerHTML='<span class="spin"></span> Guardando…';
-    const clean=sel.map(m=>({fecha:m.fecha,descripcion:m.descripcion,moneda:m.moneda,monto:m.monto,tipo:m.tipo,categoria:m.categoria,subcategoria:m.subcategoria||"",cuenta:m.cuenta,fuente:"import",estado:m.estado,cuotas:m.cuotas||"",hash:m.hash,id:m.id,periodo:m.periodo||"",fechaPago:m.fechaPago||""}));
+    const clean=sel.map(m=>({fecha:m.fecha,descripcion:m.descripcion,moneda:m.moneda,monto:m.monto,tipo:m.tipo,categoria:m.categoria,subcategoria:m.subcategoria||"",cuenta:m.cuenta,fuente:"import",estado:m.estado,cuotas:m.cuotas||"",hash:m.hash,id:m.id,periodo:m.periodo||"",fechaPago:m.fechaPago||"",cuentaDestino:m.cuentaDestino||""}));
     const res=await api({action:"saveBatch", movs:clean});
     // actualizar saldos de cuentas desde metadata
     await upsertCuentasFromImport(importState.results);
@@ -1043,7 +1087,7 @@ $("#mepChip").onclick=()=>fetchMep(false);
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   $("#curtoggle").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.cur===state.cur));
   renderMep();
-  fetchMep(true);
+  if(!(state.mep && state.mep.manual)) fetchMep(true); // respeta la cotización manual
   render();
   if(state.apiUrl){
     try{ await loadAll(); render(); }catch(e){ toast("No se pudo cargar: "+e.message); }

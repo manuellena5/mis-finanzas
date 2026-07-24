@@ -51,6 +51,16 @@ Las pestañas (Movimientos, Reglas, Cuentas, Inversiones, Config) se crean solas
 3. Categorizá lo pendiente. Al guardar, tildá "crear regla" para automatizar la próxima.
 4. Para inversiones: **Inversiones → Importar** el PDF de PPI/Balanz (reemplaza la tenencia de ese broker).
 
+## Transferencias entre cuentas propias
+
+Cuando movés plata entre tus cuentas (ej. de MercadoPago a Santander), esos movimientos **no deberían contar como ingreso ni gasto**. Marcá el movimiento con tipo **"Transferencia interna"** y elegí la **cuenta contraparte** (a/desde dónde fue el dinero). Esos movimientos quedan neutros en los KPIs (no suman ni restan) y se muestran como `Cuenta A → Cuenta B`.
+
+Para automatizarlo, creá una **regla** con tu nombre como patrón (ej. "manuel alejandro ellena") y Tipo "Transferencia interna": todas tus transferencias entre cuentas propias se marcan solas. Los pagos de tarjeta también se tratan como neutros (ya están contados en los consumos).
+
+## Cotización del dólar
+
+Se toma automáticamente el **dólar MEP** (con respaldo al Blue si la fuente principal falla). Si tu red bloquea las APIs y no trae nada, en **Config** podés **fijar el valor a mano** (1 USD = $…) y queda guardado.
+
 ## Tarjetas: consumo vs. resumen vs. pago
 
 Un consumo de tarjeta tiene tres fechas distintas. Ejemplo: comprás el **30/5**, cae en el **resumen de junio** (cierre 02/07) y lo pagás en **julio**. La app guarda las tres y podés elegir cómo verlo con el toggle **Consumo / Resumen / Pago** en Movimientos:
