@@ -108,6 +108,7 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:flex;align-items:flex-end;justify-content:center;padding:0}
 @media(min-width:640px){.overlay{align-items:center;padding:20px}}
 .modal{background:#fff;width:100%;max-width:520px;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:18px 18px 24px}
+.modal.wide{max-width:860px}
 @media(min-width:640px){.modal{border-radius:16px}}
 .modal h3{margin:2px 0 4px;font-size:17px}
 .modal .close{float:right;background:none;border:none;font-size:22px;color:var(--faint);cursor:pointer;line-height:1}
@@ -172,8 +173,8 @@ const NAV = [
 const CATS = [
   ["Supermercado","#4ade80"],["Comida y bares","#f472b6"],["Transporte","#60a5fa"],
   ["Combustible","#fbbf24"],["Servicios","#38bdf8"],["Impuestos","#f87171"],
-  ["Salud","#34d399"],["Hogar","#a3e635"],["Suscripciones","#a78bfa"],
-  ["Ropa","#fb923c"],["Educación","#22d3ee"],["Entretenimiento","#e879f9"],
+  ["Salud","#34d399"],["Seguros","#fda4af"],["Hogar","#a3e635"],["Suscripciones","#a78bfa"],
+  ["Ropa","#fb923c"],["Electrónica","#7dd3fc"],["Educación","#22d3ee"],["Entretenimiento","#e879f9"],
   ["Ingresos","#16a34a"],["Transferencias","#94a3b8"],["Pago tarjeta","#818cf8"],
   ["Inversiones","#0ea5e9"],["Rendimientos","#2dd4bf"],["Otros","#94a3b8"],
 ];
@@ -238,7 +239,7 @@ async function api(payload){
 async function loadAll(){
   if(!state.apiUrl){ state.loaded=true; return; }
   const d = await api({action:"all"});
-  state.movimientos = d.movimientos||[];
+  state.movimientos = (d.movimientos||[]).map(m=>({...m, fecha:isoDate(m.fecha)}));
   state.reglas      = d.reglas||[];
   state.cuentas     = d.cuentas||[];
   state.inversiones = d.inversiones||[];
@@ -325,6 +326,17 @@ function ddmmyy(s){ // 29/05/26 -> 2026-05-29 ; 29/05/2026 -> 2026-05-29
   return `${y}-${m[2]}-${m[1]}`;
 }
 function ddmmaaaa(s){ const m=s.match(/(\d{2})[-\/](\d{2})[-\/](\d{4})/); return m?`${m[3]}-${m[2]}-${m[1]}`:s; }
+// Normaliza cualquier fecha (ISO, DD/MM/YYYY, Date.toString() de Sheets, ISO con T) a "YYYY-MM-DD"
+function isoDate(f){
+  if(!f) return "";
+  let s=String(f).trim();
+  let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m=s.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})/); if(m) return `${m[3]}-${m[2]}-${m[1]}`;
+  const d=new Date(s); if(!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  return s;
+}
+// Formato de visualización DD/MM/YYYY
+function dispDate(f){ const s=isoDate(f); const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); return m?`${m[3]}/${m[2]}/${m[1]}`:s; }
 function hashMov(m){ return `${m.fecha}|${Math.round(m.monto*100)}|${(m.descripcion||"").slice(0,40).toLowerCase()}|${m.cuenta}`; }
 
 function tipoDesde(desc, monto){
@@ -374,7 +386,8 @@ const Parsers = {
         const moneda= usd!=null ? "USD":"ARS";
         const monto = usd!=null ? usd : ars;
         if(monto==null) continue;
-        movs.push({fecha:fecha?ddmmaaaa(fecha):"", descripcion:desc, moneda, monto,
+        const descFull = cuotas ? `${desc} (cuota ${cuotas})` : desc;
+        movs.push({fecha:fecha?ddmmaaaa(fecha):"", descripcion:descFull, moneda, monto,
                    cuenta:nombre, tipo:/su pago/i.test(desc)?"Pago tarjeta":(monto<0?"Pago tarjeta":"Gasto"), cuotas});
       }
     }
@@ -522,19 +535,30 @@ function viewNoApi(){
 }
 
 /* ---------- MOVIMIENTOS ---------- */
-let movFilter = {q:"", estado:"todos", cuenta:"todas"};
+const MESES_ES=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+function mesLabel(ym){ if(!ym||ym==="todos") return "Todos los meses"; const [y,m]=ym.split("-"); return `${MESES_ES[(+m)-1]} ${y}`; }
+let movFilter = {q:"", estado:"todos", cuenta:"todas", mes:undefined};
+function mesesDisponibles(){ return [...new Set(state.movimientos.map(m=>isoDate(m.fecha).slice(0,7)))].filter(s=>/^\d{4}-\d{2}$/.test(s)).sort().reverse(); }
 function viewMovimientos(){
+  const meses = mesesDisponibles();
+  if(movFilter.mes===undefined) movFilter.mes = meses[0] || "todos";   // arranca en el último mes con datos
   const movs = filteredMovs();
   const pend = state.movimientos.filter(m=>m.estado!=="categorizado").length;
   const cuentas = [...new Set(state.movimientos.map(m=>m.cuenta))].filter(Boolean);
-  const gastoMes = state.movimientos.filter(m=>esMesActual(m.fecha)&&signo(m)<0);
-  const ingMes   = state.movimientos.filter(m=>esMesActual(m.fecha)&&signo(m)>0);
+  const enMes = m => movFilter.mes==="todos" || isoDate(m.fecha).slice(0,7)===movFilter.mes;
+  const gastoMes = state.movimientos.filter(m=>enMes(m)&&signo(m)<0);
+  const ingMes   = state.movimientos.filter(m=>enMes(m)&&signo(m)>0);
+  const lblMes = movFilter.mes==="todos" ? "(todos)" : mesLabel(movFilter.mes);
   return `
   <div class="flexbtw"><h2 class="tab-title">Movimientos</h2>
     <button class="btn primary sm" id="btnImport">⬆ Importar</button></div>
+  <div style="margin-bottom:12px"><select class="f" id="movMes" style="max-width:220px">
+    <option value="todos" ${movFilter.mes==="todos"?"selected":""}>Todos los meses</option>
+    ${meses.map(ym=>`<option value="${ym}" ${movFilter.mes===ym?"selected":""}>${mesLabel(ym)}</option>`).join("")}
+  </select></div>
   <div class="stat-grid">
-    <div class="stat"><div class="lbl">Gasto del mes</div><div class="val" style="color:var(--danger)">${fmtTotal(sumIn(gastoMes.map(absItem),state.cur==='USD'?'USD':'ARS'))}</div><div class="sub">${gastoMes.length} movs</div></div>
-    <div class="stat"><div class="lbl">Ingresos del mes</div><div class="val" style="color:var(--green-med)">${fmtTotal(sumIn(ingMes.map(absItem),state.cur==='USD'?'USD':'ARS'))}</div><div class="sub">${ingMes.length} movs</div></div>
+    <div class="stat"><div class="lbl">Gasto · ${lblMes}</div><div class="val" style="color:var(--danger)">${fmtTotal(sumIn(gastoMes.map(absItem),state.cur==='USD'?'USD':'ARS'))}</div><div class="sub">${gastoMes.length} movs</div></div>
+    <div class="stat"><div class="lbl">Ingresos · ${lblMes}</div><div class="val" style="color:var(--green-med)">${fmtTotal(sumIn(ingMes.map(absItem),state.cur==='USD'?'USD':'ARS'))}</div><div class="sub">${ingMes.length} movs</div></div>
     <div class="stat"><div class="lbl">Sin categorizar</div><div class="val">${pend}</div><div class="sub">${pend?'requieren atención':'todo al día'}</div></div>
   </div>
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
@@ -554,6 +578,7 @@ function signo(m){ if(/Ingreso|Rendimiento/i.test(m.tipo)) return 1; if(m.monto<
 function esMesActual(f){ if(!f) return false; const d=new Date(); return f.slice(0,7)===d.toISOString().slice(0,7); }
 function filteredMovs(){
   let l=state.movimientos.slice();
+  if(movFilter.mes && movFilter.mes!=="todos") l=l.filter(m=>isoDate(m.fecha).slice(0,7)===movFilter.mes);
   if(movFilter.estado==="pendientes") l=l.filter(m=>m.estado!=="categorizado");
   if(movFilter.estado==="categorizados") l=l.filter(m=>m.estado==="categorizado");
   if(movFilter.cuenta!=="todas") l=l.filter(m=>m.cuenta===movFilter.cuenta);
@@ -566,8 +591,8 @@ function movRow(m){
   return `<div class="mov" data-id="${m.id}">
     <div style="flex:1;min-width:0">
       <div class="desc">${esc(m.descripcion)}</div>
-      <div class="meta">${cat}<span class="tag">${esc(m.cuenta)}</span>${m.cuotas?`<span class="tag">${esc(m.cuotas)}</span>`:""}</div>
-      <div class="date">${esc(m.fecha)}</div>
+      <div class="meta">${cat}<span class="tag">${esc(m.cuenta)}</span></div>
+      <div class="date">${esc(dispDate(m.fecha))}</div>
     </div>
     <div class="amt"><div class="n ${pos?'pos':'neg'}">${pos?'+':'–'}${showAmt(Math.abs(m.monto),m.moneda).replace(/^[+\-–]/,'')}</div>
       ${state.cur==="ambas"?"":`<div class="sub">${m.moneda}</div>`}</div>
@@ -649,7 +674,7 @@ function cuentaRow(c){
   const neg = String(c.tipo)==="tarjeta";
   return `<div class="mov" data-cta-id="${c.id}">
     <div style="flex:1;min-width:0"><div class="desc">${esc(c.nombre)}</div>
-      <div class="meta"><span class="tag">${esc(c.tipo||'cuenta')}</span><span class="tag">${esc(c.moneda||'ARS')}</span>${c.fechaSaldo?`<span class="tag">${esc(c.fechaSaldo)}</span>`:""}</div></div>
+      <div class="meta"><span class="tag">${esc(c.tipo||'cuenta')}</span><span class="tag">${esc(c.moneda||'ARS')}</span>${c.fechaSaldo?`<span class="tag">${esc(dispDate(c.fechaSaldo))}</span>`:""}</div></div>
     <div class="amt"><div class="n ${neg?'neg':''}">${showAmt(Math.abs(+c.saldo||0),c.moneda||'ARS')}</div></div>
   </div>`;
 }
@@ -696,6 +721,7 @@ function bindContent(){
   const c=$("#content");
   const bi=$("#btnImport"); if(bi) bi.onclick=openImport;
   // filtros movimientos
+  const mm=$("#movMes"); if(mm) mm.onchange=()=>{ movFilter.mes=mm.value; render(); };
   c.querySelectorAll("[data-est]").forEach(b=>b.onclick=()=>{movFilter.estado=b.dataset.est;render();});
   c.querySelectorAll("[data-cta]").forEach(b=>b.onclick=()=>{movFilter.cuenta=b.dataset.cta;render();});
   const ms=$("#movSearch"); if(ms){ ms.oninput=()=>{movFilter.q=ms.value;}; ms.onkeyup=e=>{ if(e.key==="Enter"){render();$("#movSearch").focus();}}; ms.onblur=()=>render(); }
@@ -715,9 +741,9 @@ function bindContent(){
   c.querySelectorAll("[data-del-reg]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(confirm("¿Borrar regla?")){ await api({action:"deleteRegla",id:b.dataset.delReg}); state.reglas=state.reglas.filter(r=>r.id!==b.dataset.delReg); render(); }});
 }
 
-function modal(html){
+function modal(html, cls){
   const o=document.createElement("div"); o.className="overlay";
-  o.innerHTML=`<div class="modal">${html}</div>`;
+  o.innerHTML=`<div class="modal ${cls||''}">${html}</div>`;
   o.onclick=e=>{ if(e.target===o) o.remove(); };
   document.body.appendChild(o);
   const cl=o.querySelector(".close"); if(cl) cl.onclick=()=>o.remove();
@@ -734,7 +760,7 @@ function openMovModal(m){
     <button class="close">&times;</button>
     <h3>${isNew?"Nuevo movimiento":"Movimiento"}</h3>
     <div class="row2">
-      <div><label class="f">Fecha</label><input class="f" type="date" id="m_fecha" value="${esc(m.fecha)}"></div>
+      <div><label class="f">Fecha</label><input class="f" type="date" id="m_fecha" value="${esc(isoDate(m.fecha))}"></div>
       <div><label class="f">Cuenta</label><select class="f" id="m_cuenta">${cuentas.map(c=>`<option ${c===m.cuenta?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
     </div>
     <label class="f">Descripción</label><input class="f" id="m_desc" value="${esc(m.descripcion)}">
@@ -752,6 +778,9 @@ function openMovModal(m){
       ${isNew?"":`<button class="btn ghost" id="m_del">🗑</button>`}
     </div>`);
   $("#m_save",o).onclick=async()=>{
+    const btn=$("#m_save",o); if(btn.disabled) return;
+    btn.disabled=true; btn.innerHTML='<span class="spin"></span> Guardando…';
+    try{
     const upd={...m,
       fecha:$("#m_fecha",o).value, cuenta:$("#m_cuenta",o).value, descripcion:$("#m_desc",o).value,
       monto:parseFloat($("#m_monto",o).value)||0, moneda:$("#m_moneda",o).value,
@@ -768,6 +797,7 @@ function openMovModal(m){
       toast("Movimiento y regla guardados");
     } else toast("Guardado");
     o.remove(); render();
+    }catch(err){ btn.disabled=false; btn.innerHTML="Guardar"; toast("Error: "+err.message); }
   };
   const md=$("#m_del",o); if(md) md.onclick=async()=>{ if(confirm("¿Borrar movimiento?")){ await api({action:"delete",id:m.id}); state.movimientos=state.movimientos.filter(x=>x.id!==m.id); o.remove(); render(); }};
 }
@@ -829,7 +859,7 @@ function openImport(){
     <div class="faint" style="font-size:12.5px;margin-bottom:12px">MercadoPago, Santander, Amex, Visa (Excel/PDF) o tenencia de PPI / Balanz (PDF). Se detecta el tipo solo.</div>
     <div class="drop" id="drop">📄 Tocá para elegir archivo<br><span class="faint" style="font-size:12px">o arrastralo acá</span>
       <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.pdf" style="display:none" multiple></div>
-    <div id="importBody"></div>`);
+    <div id="importBody"></div>`,"wide");
   const drop=$("#drop",o), inp=$("#fileInput",o);
   drop.onclick=()=>inp.click();
   drop.ondragover=e=>{e.preventDefault();drop.classList.add("drag");};
@@ -895,8 +925,8 @@ function importMovimientos(results, body, o){
     <div style="max-height:46vh;overflow:auto;margin-top:8px"><table class="tbl"><thead><tr><th></th><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Categoría</th></tr></thead><tbody>
     ${rows.map((m,i)=>`<tr class="${m._dup?'dup':''}">
       <td><input type="checkbox" data-k="${i}" ${m._dup?'':'checked'}></td>
-      <td>${esc(m.fecha)}</td>
-      <td title="${esc(m.descripcion)}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.descripcion)}</td>
+      <td style="white-space:nowrap">${esc(dispDate(m.fecha))}</td>
+      <td title="${esc(m.descripcion)}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.descripcion)}</td>
       <td class="right" style="color:${m.monto<0?'var(--danger)':'var(--green-med)'}">${m.moneda==='USD'?'u$s':'$'}${nf(m.monto)}</td>
       <td><select data-cat="${i}" style="min-width:120px"><option value="">—</option>${catOptions(m.categoria)}</select></td>
     </tr>`).join("")}
