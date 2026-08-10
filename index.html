@@ -135,6 +135,40 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 @keyframes sp{to{transform:rotate(360deg)}}
 .muted{color:var(--muted)} .faint{color:var(--faint)} .right{text-align:right}
 .flexbtw{display:flex;justify-content:space-between;align-items:center;gap:10px}
+
+/* ── Resumen ── */
+.filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:13px 15px}
+.kpi .lbl{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.kpi .val{font-size:21px;font-weight:700;line-height:1.15;letter-spacing:-.3px}
+.kpi .sub{font-size:11px;color:var(--faint);margin-top:4px}
+.kpi.hero{background:var(--green-bg);border-color:#0F513230}
+.delta{font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;white-space:nowrap;letter-spacing:0;text-transform:none}
+.delta.good{background:rgba(25,135,84,.13);color:var(--green-med)}
+.delta.bad{background:var(--danger-bg);color:var(--danger)}
+.delta.flat{background:#f1f5f9;color:var(--faint)}
+
+.chartcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 14px 10px;margin-bottom:14px}
+.chartcard h3{margin:0 0 2px;font-size:14px;font-weight:600}
+.chartcard .hint{font-size:11.5px;color:var(--faint);margin-bottom:8px}
+.chartwrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.chart{display:block;width:100%;min-width:320px;height:auto}
+.legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.legend button,.legend span.lg{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:20px;padding:4px 10px;font-size:11.5px;color:var(--muted);cursor:pointer;font-weight:500;font-family:inherit}
+.legend button.off{opacity:.38}
+.legend .sw{width:9px;height:9px;border-radius:3px;display:inline-block}
+
+.ctbl{width:100%;border-collapse:collapse;font-size:13px}
+.ctbl th{text-align:left;color:var(--faint);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.ctbl td{padding:9px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle;white-space:nowrap}
+.ctbl tr:last-child td{border-bottom:none}
+.ctbl td.name{white-space:normal;font-weight:500}
+.ctbl tfoot td{font-weight:700;border-top:1px solid var(--line);border-bottom:none}
+.minibar{height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden;width:80px}
+.minibar > div{height:100%;border-radius:3px}
+@media(max-width:640px){ .ctbl .opt{display:none} }
+.warn{background:#FEF3C7;border:1px solid #FDE68A;color:#92400E;border-radius:10px;padding:9px 12px;font-size:12.5px;margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -165,6 +199,7 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 <script>
 /* ══════════════════════ ESTADO ══════════════════════ */
 const NAV = [
+  {id:"resumen",     ic:"📊", label:"Resumen"},
   {id:"movimientos", ic:"💸", label:"Movimientos"},
   {id:"inversiones", ic:"📈", label:"Inversiones"},
   {id:"patrimonio",  ic:"💎", label:"Patrimonio"},
@@ -185,7 +220,7 @@ const state = {
   cur: localStorage.getItem("mf_cur") || "ARS",           // ARS | USD | ambas
   cardLens: localStorage.getItem("mf_lens") || "consumo", // consumo | resumen | pago
   mep: JSON.parse(localStorage.getItem("mf_mep") || "null"), // {compra,venta,fecha}
-  tab: "movimientos",
+  tab: localStorage.getItem("mf_tab") || "resumen",
   movimientos: [], reglas: [], cuentas: [], inversiones: [], config: {},
   loaded: false,
 };
@@ -545,10 +580,11 @@ async function detectAndParse(file){
 /* ══════════════════════ RENDER ══════════════════════ */
 function render(){
   renderNav();
-  $("#subtitle").textContent = {movimientos:"Movimientos y categorización", inversiones:"Cartera y seguimiento", patrimonio:"Patrimonio total", config:"Configuración"}[state.tab];
+  $("#subtitle").textContent = {resumen:"Gastos, ingresos y KPIs", movimientos:"Movimientos y categorización", inversiones:"Cartera y seguimiento", patrimonio:"Patrimonio total", config:"Configuración"}[state.tab];
   const c=$("#content");
   if(!state.apiUrl && state.tab!=="config"){ c.innerHTML = viewNoApi(); return; }
-  if({movimientos:1}[state.tab]) c.innerHTML = viewMovimientos();
+  if(state.tab==="resumen") c.innerHTML = viewResumen();
+  else if({movimientos:1}[state.tab]) c.innerHTML = viewMovimientos();
   else if(state.tab==="inversiones") c.innerHTML = viewInversiones();
   else if(state.tab==="patrimonio") c.innerHTML = viewPatrimonio();
   else if(state.tab==="config") c.innerHTML = viewConfig();
@@ -558,13 +594,333 @@ function renderNav(){
   const side=$("#sidenav"), bot=$("#bottomnav");
   side.innerHTML = NAV.map(n=>`<button data-tab="${n.id}" class="${state.tab===n.id?'on':''}"><span class="ic">${n.ic}</span>${n.label}</button>`).join("");
   bot.innerHTML  = NAV.map(n=>`<button data-tab="${n.id}" class="${state.tab===n.id?'on':''}"><span class="ic">${n.ic}</span>${n.label}</button>`).join("");
-  [...side.children,...bot.children].forEach(b=> b.onclick=()=>{ state.tab=b.dataset.tab; render(); });
+  [...side.children,...bot.children].forEach(b=> b.onclick=()=>{ state.tab=b.dataset.tab; localStorage.setItem("mf_tab",state.tab); window.scrollTo(0,0); render(); });
 }
 function viewNoApi(){
   return `<div class="empty"><div class="big">🔌</div>
     <div style="font-size:16px;font-weight:600;color:var(--muted)">Conectá tu backend</div>
     <div style="margin:8px 0 18px">Pegá la URL de tu Google Apps Script en Config para empezar.</div>
     <button class="btn primary" onclick="state.tab='config';render()">Ir a Config</button></div>`;
+}
+
+/* ══════════════════════ RESUMEN ══════════════════════ */
+let resFilter = {
+  periodo: localStorage.getItem("mf_res_periodo") || "6m",  // 3m | 6m | 12m | ytd | todos | YYYY-MM
+  cuenta:  "todas",
+  flujo:   "egresos",   // egresos | ingresos
+  catsOff: {},          // categorías apagadas en el gráfico de evolución
+};
+const PERIODOS = [["3m","Últimos 3 meses"],["6m","Últimos 6 meses"],["12m","Últimos 12 meses"],["ytd","Este año"],["todos","Todo el historial"]];
+
+/* — moneda base de agregación: en "ambas" se agrega en ARS y se muestra el equivalente — */
+function baseCur(){ return state.cur==="USD" ? "USD" : "ARS"; }
+function convAmt(m){ return baseCur()==="USD" ? toUSD(m.monto,m.moneda) : toARS(m.monto,m.moneda); }
+function fmtBase(v){ return (v<0?"–":"") + (baseCur()==="USD" ? "u$s "+nf(v) : "$"+nf(v)); }
+function fmtAlt(v){ const r=rate(); if(!r) return ""; return (v<0?"–":"") + (baseCur()==="USD" ? "$"+nf(v*r) : "u$s "+nf(v/r)); }
+function nfShort(v){
+  const a=Math.abs(v), s=v<0?"-":"";
+  if(a>=1e9) return s+(a/1e9).toFixed(1).replace(".",",")+"MM";
+  if(a>=1e6) return s+(a/1e6).toFixed(a>=1e7?0:1).replace(".",",")+"M";
+  if(a>=1e3) return s+Math.round(a/1e3)+"k";
+  return s+Math.round(a);
+}
+function pct1(v){ return (Math.round(v*10)/10).toString().replace(".",",")+"%"; }
+
+/* — utilidades de meses — */
+function ymNow(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function monthAdd(ym,d){ const [y,m]=ym.split("-").map(Number); const dt=new Date(y,(m-1)+d,1); return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0"); }
+function monthRange(a,b){ const out=[]; let c=a,g=0; while(c<=b && g++<400){ out.push(c); c=monthAdd(c,1); } return out; }
+function diasEnMes(ym){ const [y,m]=ym.split("-").map(Number); return new Date(y,m,0).getDate(); }
+function mesCorto(ym,conAnio){ const [y,m]=ym.split("-"); return MESES_ES[(+m)-1] + (conAnio? " "+y.slice(2) : ""); }
+
+/* — datos del período — */
+function resMovs(){
+  let l = state.movimientos.filter(m=>signo(m)!==0);
+  if(resFilter.cuenta!=="todas") l = l.filter(m=>m.cuenta===resFilter.cuenta);
+  return l;
+}
+function periodoMeses(){
+  const av = mesesDisponibles().slice().sort();
+  if(!av.length) return [];
+  const p = resFilter.periodo, ini = av[0];
+  let end = av[av.length-1]; if(ymNow()>end && ymNow()<=monthAdd(end,1)) end = ymNow(); // incluye el mes en curso
+  if(/^\d{4}-\d{2}$/.test(p)) return [p];
+  if(p==="todos") return monthRange(ini, end);
+  if(p==="ytd"){ const first = end.slice(0,4)+"-01"; return monthRange(first>ini?first:ini, end); }
+  const n = parseInt(p,10) || 6;
+  const start = monthAdd(end, -(n-1));
+  return monthRange(start>ini?start:ini, end);
+}
+function mesesPrevios(meses){
+  if(!meses.length) return [];
+  const n = meses.length;
+  return monthRange(monthAdd(meses[0],-n), monthAdd(meses[0],-1));
+}
+function aggByMonth(movs, meses){
+  const map={}; meses.forEach(k=> map[k]={ing:0,egr:0,nIng:0,nEgr:0});
+  movs.forEach(m=>{
+    const k=movMesKey(m); const a=map[k]; if(!a) return;
+    const v=Math.abs(convAmt(m));
+    if(signo(m)>0){ a.ing+=v; a.nIng++; } else { a.egr+=v; a.nEgr++; }
+  });
+  return map;
+}
+function totales(agg, meses){
+  let ing=0,egr=0,nIng=0,nEgr=0;
+  meses.forEach(k=>{ const a=agg[k]; if(!a) return; ing+=a.ing; egr+=a.egr; nIng+=a.nIng; nEgr+=a.nEgr; });
+  return {ing,egr,bal:ing-egr,nIng,nEgr};
+}
+function aggByCat(movs, meses, flujo){
+  const sg = flujo==="ingresos" ? 1 : -1;
+  const set = {}; meses.forEach(k=>set[k]=1);
+  const map = {};
+  movs.forEach(m=>{
+    if(signo(m)!==sg) return;
+    const k=movMesKey(m); if(!set[k]) return;
+    const cat = m.categoria || "Sin categoría";
+    const o = map[cat] || (map[cat]={cat, total:0, n:0, byMonth:{}});
+    const v = Math.abs(convAmt(m));
+    o.total+=v; o.n++; o.byMonth[k]=(o.byMonth[k]||0)+v;
+  });
+  return Object.values(map).sort((a,b)=>b.total-a.total);
+}
+function deltaChip(cur, prev, goodUp){
+  if(!prev || !isFinite(prev) || prev<=0) return "";
+  const p = (cur-prev)/prev*100;
+  if(Math.abs(p)<1) return `<span class="delta flat">≈ igual</span>`;
+  const good = goodUp ? p>0 : p<0;
+  return `<span class="delta ${good?'good':'bad'}">${p>0?"▲":"▼"} ${pct1(Math.abs(p))}</span>`;
+}
+function deltaPP(cur, prev){   // diferencia en puntos porcentuales (para tasas)
+  if(cur==null || prev==null) return "";
+  const d = cur-prev;
+  if(Math.abs(d)<0.5) return `<span class="delta flat">≈ igual</span>`;
+  return `<span class="delta ${d>0?'good':'bad'}">${d>0?"▲":"▼"} ${pct1(Math.abs(d)).replace("%"," pp")}</span>`;
+}
+function niceMax(v){
+  if(!(v>0)) return 1;
+  const p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p;
+  const m = n<=1?1 : n<=2?2 : n<=2.5?2.5 : n<=5?5 : 10;
+  return m*p;
+}
+
+/* ---------- vista ---------- */
+function viewResumen(){
+  const meses = periodoMeses();
+  if(!state.movimientos.length){
+    return `<h2 class="tab-title">Resumen</h2>
+      <div class="empty"><div class="big">📊</div><div>Todavía no hay movimientos.</div>
+      <div style="margin:8px 0 18px">Importá un resumen desde la pestaña Movimientos y acá vas a ver tus gastos por categoría, ingresos vs egresos y los KPIs.</div>
+      <button class="btn primary" onclick="state.tab='movimientos';render()">Ir a Movimientos</button></div>`;
+  }
+  const movs   = resMovs();
+  const prevM  = mesesPrevios(meses);
+  const agg    = aggByMonth(movs, meses);
+  const aggPr  = aggByMonth(movs, prevM);
+  const tot    = totales(agg, meses);
+  const totPr  = totales(aggPr, prevM);
+  const cats   = aggByCat(movs, meses, resFilter.flujo);
+  const catsPr = aggByCat(movs, prevM, resFilter.flujo);
+  const prevOf = {}; catsPr.forEach(c=>prevOf[c.cat]=c.total);
+
+  const hoy = ymNow();
+  const enCurso = meses.indexOf(hoy)>=0;
+  const completos = meses.filter(k=>k!==hoy);
+  const baseProm = completos.length? completos : meses;
+  const promEgr = baseProm.reduce((a,k)=>a+((agg[k]||{}).egr||0),0) / (baseProm.length||1);
+  const promIng = baseProm.reduce((a,k)=>a+((agg[k]||{}).ing||0),0) / (baseProm.length||1);
+  const promEgrPr = prevM.length ? prevM.reduce((a,k)=>a+((aggPr[k]||{}).egr||0),0)/prevM.length : 0;
+
+  // proyección del mes en curso según ritmo diario
+  let proy=null, gastoHoy=0, diaHoy=0;
+  if(enCurso){
+    gastoHoy = (agg[hoy]||{}).egr||0;
+    diaHoy = new Date().getDate();
+    proy = diaHoy>0 ? gastoHoy/diaHoy*diasEnMes(hoy) : 0;
+  }
+  const ahorro = tot.ing>0 ? (tot.bal/tot.ing*100) : null;
+  const ahorroPr = totPr.ing>0 ? (totPr.bal/totPr.ing*100) : null;
+
+  const cuentas = [...new Set(state.movimientos.map(m=>m.cuenta))].filter(Boolean);
+  const hayTarjeta = state.movimientos.some(m=>m.periodo);
+  const mesesSel = mesesDisponibles();
+  const lblPer = /^\d{4}-\d{2}$/.test(resFilter.periodo) ? mesLabel(resFilter.periodo)
+               : (PERIODOS.find(p=>p[0]===resFilter.periodo)||[,""])[1].toLowerCase();
+  const sinCotiz = !rate() && state.movimientos.some(m=>m.moneda!==baseCur());
+
+  return `
+  <div class="flexbtw"><h2 class="tab-title">Resumen</h2>
+    <span class="faint" style="font-size:11.5px">${meses.length} ${meses.length===1?"mes":"meses"} · ${state.cur==="ambas"?"totales en ARS":"en "+state.cur}</span></div>
+
+  ${sinCotiz?`<div class="warn">⚠️ Sin cotización del dólar: los montos en la otra moneda no se están convirtiendo. Cargá el valor en Config.</div>`:""}
+
+  <div class="filterbar">
+    <select class="f" id="resPeriodo" style="max-width:210px">
+      ${PERIODOS.map(([v,l])=>`<option value="${v}" ${resFilter.periodo===v?"selected":""}>${l}</option>`).join("")}
+      <optgroup label="Mes puntual">
+        ${mesesSel.map(ym=>`<option value="${ym}" ${resFilter.periodo===ym?"selected":""}>${mesLabel(ym)}</option>`).join("")}
+      </optgroup>
+    </select>
+    ${hayTarjeta?`<div class="curtoggle" id="lensToggle" title="Cómo se imputa el mes de los consumos de tarjeta">
+      ${[["consumo","Consumo"],["resumen","Resumen"],["pago","Pago"]].map(([v,l])=>`<button data-lens="${v}" class="${state.cardLens===v?'on':''}">${l}</button>`).join("")}
+    </div>`:""}
+  </div>
+  ${cuentas.length>1?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+    <button class="pill ${resFilter.cuenta==='todas'?'on':''}" data-rcta="todas">Todas las cuentas</button>
+    ${cuentas.map(c=>`<button class="pill ${resFilter.cuenta===c?'on':''}" data-rcta="${esc(c)}">${esc(c)}</button>`).join("")}</div>`:""}
+
+  <div class="kpi-grid">
+    <div class="kpi"><div class="lbl">Ingresos ${deltaChip(tot.ing,totPr.ing,true)}</div>
+      <div class="val" style="color:var(--green-med)">${fmtBase(tot.ing)}</div>
+      <div class="sub">${tot.nIng} movs${fmtAlt(tot.ing)?" · "+fmtAlt(tot.ing):""}</div></div>
+    <div class="kpi"><div class="lbl">Egresos ${deltaChip(tot.egr,totPr.egr,false)}</div>
+      <div class="val" style="color:var(--danger)">${fmtBase(tot.egr)}</div>
+      <div class="sub">${tot.nEgr} movs${fmtAlt(tot.egr)?" · "+fmtAlt(tot.egr):""}</div></div>
+    <div class="kpi hero"><div class="lbl" style="color:var(--green)">Balance ${deltaChip(tot.bal,totPr.bal,true)}</div>
+      <div class="val" style="color:${tot.bal>=0?'var(--green)':'var(--danger)'}">${fmtBase(tot.bal)}</div>
+      <div class="sub">${tot.bal>=0?"superávit":"déficit"} del período</div></div>
+    <div class="kpi"><div class="lbl">Tasa de ahorro ${ahorro!=null&&ahorroPr!=null?deltaPP(ahorro,ahorroPr):""}</div>
+      <div class="val" style="color:${(ahorro||0)>=0?'var(--ink)':'var(--danger)'}">${ahorro==null?"—":pct1(ahorro)}</div>
+      <div class="sub">${ahorro==null?"sin ingresos en el período":"de cada $100 que entran, ahorrás $"+Math.round(Math.max(0,ahorro))}</div></div>
+    <div class="kpi"><div class="lbl">Gasto promedio / mes ${deltaChip(promEgr,promEgrPr,false)}</div>
+      <div class="val">${fmtBase(promEgr)}</div>
+      <div class="sub">${baseProm.length} ${baseProm.length===1?"mes":"meses"}${enCurso&&completos.length?" (sin el mes en curso)":""}</div></div>
+    <div class="kpi"><div class="lbl">Proyección ${enCurso?mesCorto(hoy):"—"}</div>
+      <div class="val" style="color:${proy!=null&&promEgr>0&&proy>promEgr*1.1?'var(--danger)':'var(--ink)'}">${proy==null?"—":fmtBase(proy)}</div>
+      <div class="sub">${proy==null?"el período no incluye el mes actual":`llevás ${fmtBase(gastoHoy)} en ${diaHoy} ${diaHoy===1?"día":"días"}${promEgr>0?" · "+(proy>promEgr?"↑":"↓")+" "+pct1(Math.abs((proy-promEgr)/promEgr*100))+" vs promedio":""}`}</div></div>
+  </div>
+
+  <div class="chartcard">
+    <h3>Ingresos vs egresos por mes</h3>
+    <div class="hint">Barras = ingresos y egresos · línea = balance neto. Tocá una barra para ver el detalle.</div>
+    <div class="chartwrap">${chartFlujo(meses, agg)}</div>
+    <div class="legend">
+      <span class="lg"><span class="sw" style="background:var(--green-med)"></span>Ingresos</span>
+      <span class="lg"><span class="sw" style="background:var(--danger)"></span>Egresos</span>
+      <span class="lg"><span class="sw" style="background:var(--ink)"></span>Balance</span>
+    </div>
+  </div>
+
+  <div class="chartcard">
+    <div class="flexbtw"><h3>Evolución de gasto por categoría</h3></div>
+    <div class="hint">Top ${Math.min(6,cats.length)} categorías del período. Tocá la leyenda para mostrar u ocultar.</div>
+    ${meses.length<2 ? `<div class="faint" style="font-size:12.5px;padding:14px 2px">Elegí un período de varios meses para ver la evolución.</div>`
+      : chartCats(meses, aggByCat(movs, meses, "egresos"))}
+  </div>
+
+  <div class="chartcard">
+    <div class="flexbtw" style="margin-bottom:8px">
+      <h3>${resFilter.flujo==="egresos"?"Gastos":"Ingresos"} por categoría</h3>
+      <div class="curtoggle" id="flujoToggle">
+        <button data-rflujo="egresos" class="${resFilter.flujo==="egresos"?"on":""}">Egresos</button>
+        <button data-rflujo="ingresos" class="${resFilter.flujo==="ingresos"?"on":""}">Ingresos</button>
+      </div>
+    </div>
+    ${tablaCats(cats, prevOf, meses, resFilter.flujo)}
+  </div>`;
+}
+
+/* ---------- gráfico: ingresos vs egresos ---------- */
+function chartFlujo(meses, agg){
+  const n = meses.length; if(!n) return "";
+  const W = Math.max(340, 56*n+56), H=250, padL=48, padR=12, padT=14, padB=30;
+  const pw = W-padL-padR, ph = H-padT-padB;
+  const vals = meses.map(k=>agg[k]||{ing:0,egr:0});
+  const bals = vals.map(v=>v.ing-v.egr);
+  const rawTop = Math.max(1,...vals.map(v=>Math.max(v.ing,v.egr)), ...bals);
+  const rawBot = Math.min(0,...bals);
+  const top  = niceMax(rawTop);                 // ticks de 0 a top ⇒ el 0 siempre es una línea
+  const step = top/4, nT = 4;
+  const bot  = rawBot<0 ? rawBot*1.15 : 0;      // espacio justo para los meses en rojo
+  const rng  = (top-bot)||1;
+  const y    = v => padT + ph - ((v-bot)/rng)*ph;
+  const slot = pw/n, bw = Math.min(17, slot*0.3);
+  let g="";
+  for(let i=0;i<=nT;i++){
+    const v = step*i, yy = y(v), zero = i===0;
+    g += `<line x1="${padL}" x2="${W-padR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="${zero?'#cbd5e1':'#eef2f7'}" stroke-width="1"/>`;
+    g += `<text x="${padL-7}" y="${(yy+3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="#94a3b8">${nfShort(v)}</text>`;
+  }
+  const y0 = y(0);
+  meses.forEach((k,i)=>{
+    const v=vals[i], cx=padL+slot*i+slot/2;
+    const hi=Math.max(1,y0-y(v.ing)), he=Math.max(1,y0-y(v.egr));
+    g += `<rect x="${(cx-bw-2).toFixed(1)}" y="${y(v.ing).toFixed(1)}" width="${bw.toFixed(1)}" height="${hi.toFixed(1)}" rx="2.5" fill="var(--green-med)"><title>${mesLabel(k)} — Ingresos ${fmtBase(v.ing)}</title></rect>`;
+    g += `<rect x="${(cx+2).toFixed(1)}" y="${y(v.egr).toFixed(1)}" width="${bw.toFixed(1)}" height="${he.toFixed(1)}" rx="2.5" fill="var(--danger)"><title>${mesLabel(k)} — Egresos ${fmtBase(v.egr)}</title></rect>`;
+    const mostrar = n<=12 || i%2===0 || i===n-1;
+    g += `<text x="${cx.toFixed(1)}" y="${H-10}" text-anchor="middle" font-size="10" fill="#94a3b8">${mostrar?mesCorto(k, i===0||k.slice(5)==="01"):""}</text>`;
+  });
+  const pts = meses.map((k,i)=>`${(padL+slot*i+slot/2).toFixed(1)},${y(bals[i]).toFixed(1)}`).join(" ");
+  g += `<polyline points="${pts}" fill="none" stroke="var(--ink)" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity=".7"/>`;
+  meses.forEach((k,i)=>{
+    g += `<circle cx="${(padL+slot*i+slot/2).toFixed(1)}" cy="${y(bals[i]).toFixed(1)}" r="3.2" fill="#fff" stroke="var(--ink)" stroke-width="1.6"><title>${mesLabel(k)} — Balance ${fmtBase(bals[i])}</title></circle>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Ingresos vs egresos por mes">${g}</svg>`;
+}
+
+/* ---------- gráfico: evolución por categoría ---------- */
+function chartCats(meses, cats){
+  const top = cats.slice(0,6);
+  if(!top.length) return `<div class="faint" style="font-size:12.5px;padding:14px 2px">Sin gastos en el período.</div>`;
+  const vis = top.filter(c=>!resFilter.catsOff[c.cat]);
+  const n = meses.length;
+  const W = Math.max(340, 56*n+56), H=230, padL=48, padR=26, padT=16, padB=28;
+  const pw = W-padL-padR, ph = H-padT-padB;
+  let max = 0;
+  vis.forEach(c=> meses.forEach(k=> max=Math.max(max, c.byMonth[k]||0)));
+  const top1 = niceMax(max||1);
+  const y = v => padT + ph - (v/top1)*ph;
+  const x = i => n===1 ? padL+pw/2 : padL + (pw/(n-1))*i;
+  let g="";
+  for(let i=0;i<=4;i++){
+    const v = top1*i/4, yy=y(v);
+    g += `<line x1="${padL}" x2="${W-padR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="#eef2f7"/>`;
+    g += `<text x="${padL-7}" y="${(yy+3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="#94a3b8">${nfShort(v)}</text>`;
+  }
+  meses.forEach((k,i)=>{
+    const mostrar = n<=12 || i%2===0 || i===n-1;
+    g += `<text x="${x(i).toFixed(1)}" y="${H-9}" text-anchor="middle" font-size="10" fill="#94a3b8">${mostrar?mesCorto(k, i===0||k.slice(5)==="01"):""}</text>`;
+  });
+  vis.forEach(c=>{
+    const col = catColor(c.cat);
+    const pts = meses.map((k,i)=>`${x(i).toFixed(1)},${y(c.byMonth[k]||0).toFixed(1)}`).join(" ");
+    g += `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    meses.forEach((k,i)=>{
+      g += `<circle cx="${x(i).toFixed(1)}" cy="${y(c.byMonth[k]||0).toFixed(1)}" r="3" fill="#fff" stroke="${col}" stroke-width="1.8"><title>${esc(c.cat)} — ${mesLabel(k)}: ${fmtBase(c.byMonth[k]||0)}</title></circle>`;
+    });
+  });
+  const svg = `<div class="chartwrap"><svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolución de gasto por categoría">${g}</svg></div>`;
+  const leg = `<div class="legend">${top.map(c=>`<button data-rcat="${esc(c.cat)}" class="${resFilter.catsOff[c.cat]?'off':''}"><span class="sw" style="background:${catColor(c.cat)}"></span>${esc(c.cat)}</button>`).join("")}</div>`;
+  return svg + leg;
+}
+
+/* ---------- tabla por categoría ---------- */
+function tablaCats(cats, prevOf, meses, flujo){
+  if(!cats.length) return `<div class="faint" style="font-size:12.5px;padding:10px 2px">Sin ${flujo} en el período.</div>`;
+  const total = cats.reduce((a,c)=>a+c.total,0) || 1;
+  const nm = meses.length || 1;
+  const rows = cats.map(c=>{
+    const p = c.total/total*100;
+    const pr = prevOf[c.cat]||0;
+    return `<tr>
+      <td class="name"><span class="dot" style="background:${catColor(c.cat)}"></span>${esc(c.cat)}</td>
+      <td class="right" style="font-weight:700">${fmtBase(c.total)}</td>
+      <td class="right" style="color:var(--muted)">${pct1(p)}</td>
+      <td class="opt"><div class="minibar"><div style="width:${p.toFixed(1)}%;background:${catColor(c.cat)}"></div></div></td>
+      <td class="right opt" style="color:var(--muted)">${c.n}</td>
+      <td class="right opt" style="color:var(--muted)">${fmtBase(c.total/nm)}</td>
+      <td class="right">${deltaChip(c.total, pr, flujo==="ingresos") || '<span class="faint" style="font-size:11px">nuevo</span>'}</td>
+    </tr>`;
+  }).join("");
+  return `<div style="overflow-x:auto"><table class="ctbl">
+    <thead><tr>
+      <th>Categoría</th><th class="right">Total</th><th class="right">%</th>
+      <th class="opt" style="width:90px"></th><th class="right opt">Movs</th><th class="right opt">Prom/mes</th><th class="right">vs ant.</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td>Total</td><td class="right">${fmtBase(total)}</td><td class="right">100%</td>
+      <td class="opt"></td><td class="right opt">${cats.reduce((a,c)=>a+c.n,0)}</td><td class="right opt">${fmtBase(total/nm)}</td><td></td></tr></tfoot>
+  </table></div>`;
 }
 
 /* ---------- MOVIMIENTOS ---------- */
@@ -779,6 +1135,13 @@ function reglaRow(r){
 function bindContent(){
   const c=$("#content");
   const bi=$("#btnImport"); if(bi) bi.onclick=openImport;
+  // filtros resumen
+  const rp=$("#resPeriodo"); if(rp) rp.onchange=()=>{ resFilter.periodo=rp.value; localStorage.setItem("mf_res_periodo",resFilter.periodo); render(); };
+  c.querySelectorAll("[data-rcta]").forEach(b=> b.onclick=()=>{ resFilter.cuenta=b.dataset.rcta; render(); });
+  c.querySelectorAll("[data-rflujo]").forEach(b=> b.onclick=()=>{ resFilter.flujo=b.dataset.rflujo; render(); });
+  c.querySelectorAll("[data-rcat]").forEach(b=> b.onclick=()=>{
+    const k=b.dataset.rcat; resFilter.catsOff[k] = !resFilter.catsOff[k]; render();
+  });
   // filtros movimientos
   const mm=$("#movMes"); if(mm) mm.onchange=()=>{ movFilter.mes=mm.value; render(); };
   const lt=$("#lensToggle"); if(lt) lt.querySelectorAll("button").forEach(b=> b.onclick=()=>{ state.cardLens=b.dataset.lens; localStorage.setItem("mf_lens",state.cardLens); movFilter.mes=undefined; render(); });

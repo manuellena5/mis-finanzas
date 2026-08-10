@@ -4,6 +4,7 @@ Webapp personal (solo para vos) para cargar resúmenes de cuenta, categorizar mo
 
 ## Qué hace
 
+- **Resumen** (pantalla de inicio): KPIs del período, ingresos vs egresos mes a mes, evolución del gasto por categoría y tabla de categorías con porcentajes. Con filtros de período y cuenta.
 - **Movimientos**: importás resúmenes de MercadoPago, Santander, Amex y Visa (Excel o PDF). La app los normaliza, aplica reglas de autocategorización y te deja categorizar lo que quedó pendiente. También podés cargar movimientos a mano.
 - **Reglas**: cada vez que categorizás algo, podés crear una regla (por "contiene / empieza / igual / regex") para que la próxima vez se detecte solo.
 - **Inversiones**: importás la tenencia valorizada de PPI o Balanz (PDF) y ves tu cartera por activo y por tipo.
@@ -50,6 +51,26 @@ Las pestañas (Movimientos, Reglas, Cuentas, Inversiones, Config) se crean solas
 2. **Movimientos → Importar** → arrastrá el archivo → revisá la previsualización (los duplicados vienen destildados) → **Importar seleccionados**.
 3. Categorizá lo pendiente. Al guardar, tildá "crear regla" para automatizar la próxima.
 4. Para inversiones: **Inversiones → Importar** el PDF de PPI/Balanz (reemplaza la tenencia de ese broker).
+
+## Pantalla Resumen
+
+Es la primera pestaña y la que abre por defecto. Todo lo que muestra responde a dos filtros: **período** (últimos 3 / 6 / 12 meses, este año, todo el historial, o un mes puntual) y **cuenta**. Si hay tarjetas, también aplica el toggle **Consumo / Resumen / Pago**.
+
+**KPIs** del período, cada uno comparado contra el período anterior de igual longitud:
+
+| KPI | Qué mide |
+|---|---|
+| Ingresos / Egresos | Totales del período (las transferencias internas y pagos de tarjeta no cuentan) |
+| Balance | Ingresos − egresos: superávit o déficit |
+| Tasa de ahorro | Qué porcentaje de lo que entra no se gasta (la variación se muestra en puntos porcentuales) |
+| Gasto promedio / mes | Promedio mensual, excluyendo el mes en curso para no ensuciarlo con un mes incompleto |
+| Proyección | A qué gasto llega el mes actual si seguís al ritmo diario de lo que va del mes |
+
+**Gráficos** (SVG propio, sin librerías): barras de ingresos vs egresos por mes con la línea de balance neto encima, y evolución mes a mes de las 6 categorías con más gasto (tocá la leyenda para mostrar u ocultar cada una). Tocando cualquier barra, punto o línea aparece el detalle.
+
+**Tabla por categoría** con total, porcentaje sobre el total, cantidad de movimientos, promedio mensual y variación contra el período anterior. El toggle **Egresos / Ingresos** cambia de qué lado mirás.
+
+El selector **ARS / USD / Ambas** de arriba también afecta al Resumen: en ARS y USD todo se convierte al MEP del día, y en "Ambas" se agrega en pesos y cada total muestra su equivalente en dólares abajo. Si no hay cotización disponible, aparece un aviso porque los montos de la otra moneda no se pueden convertir.
 
 ## Transferencias entre cuentas propias
 
