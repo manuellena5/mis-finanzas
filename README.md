@@ -91,6 +91,14 @@ También podés marcar a mano cualquier movimiento ya cargado con tipo **"Transf
 
 Para automatizarlo, creá una **regla** con tu nombre como patrón (ej. "manuel alejandro ellena") y Tipo "Transferencia interna": todas tus transferencias entre cuentas propias se marcan solas. Los pagos de tarjeta también se tratan como neutros (ya están contados en los consumos).
 
+## Cómo se muestran los montos
+
+El toggle **ARS / USD / Ambas** decide en qué moneda ves todo:
+
+- En **ARS** o **USD**, los movimientos en la otra moneda se convierten al MEP del día y abajo del importe queda el **monto original** como referencia (ej. `–$2.302.500` con `u$s 1.500` debajo). Pasando el mouse por encima ves a qué cotización se convirtió.
+- En **Ambas**, cada movimiento se muestra en su propia moneda, con el código de moneda abajo.
+- Si no hay cotización cargada no se inventa ninguna conversión: se muestra el monto original y aparece un aviso para que la cargues en Config.
+
 ## Cotización del dólar
 
 Se toma automáticamente el **dólar MEP** (con respaldo al Blue si la fuente principal falla). Si tu red bloquea las APIs y no trae nada, en **Config** podés **fijar el valor a mano** (1 USD = $…) y queda guardado.
@@ -104,6 +112,22 @@ Un consumo de tarjeta tiene tres fechas distintas. Ejemplo: comprás el **30/5**
 - **Pago**: cuenta cuando pagás (julio). Mirada de flujo de caja.
 
 Al importar una tarjeta, el **período del resumen** se deduce de la fecha de cierre (cierre a principio de mes ⇒ mes anterior) y podés editarlo antes de confirmar.
+
+## Versionado y actualizaciones
+
+La app lleva su propio número de versión (semver: `mayor.menor.parche`) declarado arriba de todo en `index.html`:
+
+```js
+const APP_VERSION = "1.4.0";
+const APP_FECHA   = "2026-08-10";
+const CHANGELOG = [ … ];
+```
+
+**Regla: cada vez que se modifica `index.html` hay que subir `APP_VERSION`**, poner la fecha del día en `APP_FECHA` y agregar la entrada correspondiente arriba de todo en `CHANGELOG`. Subí el **parche** (`1.4.0` → `1.4.1`) para arreglos y retoques, el **menor** (`1.4.1` → `1.5.0`) cuando agregás una función, y el **mayor** cuando cambia algo de fondo. Si no la subís, la app no tiene forma de saber que hay algo nuevo.
+
+Cómo funciona la detección: la app baja su propio `index.html` publicado (sin caché) y le lee el `APP_VERSION`. Si el publicado es mayor que el que estás corriendo, aparece una barra verde arriba con **Actualizar** (recarga forzada, salteando la caché del navegador) o **Después** (silencia el aviso solo para esa versión). Chequea a los pocos segundos de abrir, cada media hora, y cada vez que volvés a la pestaña si pasaron más de 5 minutos. En **Config → Versión** ves cuál tenés instalada, un botón para buscar actualizaciones a mano y las novedades de las últimas versiones.
+
+Como todo pasa por el `index.html` publicado, no hace falta tocar nada en el backend ni llevar la cuenta en otro lado: alcanza con subir el archivo a GitHub Pages.
 
 ## Notas técnicas
 
