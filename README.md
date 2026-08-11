@@ -4,7 +4,7 @@ Webapp personal (solo para vos) para cargar resúmenes de cuenta, categorizar mo
 
 ## Qué hace
 
-- **Resumen** (pantalla de inicio): KPIs del período, ingresos vs egresos mes a mes, evolución del gasto por categoría y tabla de categorías con porcentajes. Con filtros de período y cuenta.
+- **Resumen** (pantalla de inicio): KPIs del período y una tabla de ingresos y egresos por categoría, mes a mes. Con filtros de período y cuenta.
 - **Movimientos**: importás resúmenes de MercadoPago, Santander, Amex y Visa (Excel o PDF). La app los normaliza, aplica reglas de autocategorización y te deja categorizar lo que quedó pendiente. También podés cargar movimientos a mano.
 - **Reglas**: cada vez que categorizás algo, podés crear una regla (por "contiene / empieza / igual / regex") para que la próxima vez se detecte solo.
 - **Inversiones**: importás la tenencia valorizada de PPI o Balanz (PDF) y ves tu cartera por activo y por tipo.
@@ -66,9 +66,7 @@ Es la primera pestaña y la que abre por defecto. Todo lo que muestra responde a
 | Gasto promedio / mes | Promedio mensual, excluyendo el mes en curso para no ensuciarlo con un mes incompleto |
 | Proyección | A qué gasto llega el mes actual si seguís al ritmo diario de lo que va del mes |
 
-**Gráficos** (SVG propio, sin librerías): barras de ingresos vs egresos por mes con la línea de balance neto encima, y evolución mes a mes de las 6 categorías con más gasto (tocá la leyenda para mostrar u ocultar cada una). Tocando cualquier barra, punto o línea aparece el detalle.
-
-**Tabla por categoría** con total, porcentaje sobre el total, cantidad de movimientos, promedio mensual y variación contra el período anterior. El toggle **Egresos / Ingresos** cambia de qué lado mirás.
+**Tabla de ingresos y egresos por categoría**: una fila por categoría y una columna por mes, en dos secciones (egresos arriba, ingresos abajo) con subtotales y una fila final de balance mensual. Los montos de las celdas van abreviados (`181k`, `1,2M`) para que entren varios meses en pantalla; la columna **Total** va completa junto al **%** que representa dentro de su sección. El sombreado de cada celda es más intenso cuanto mayor es el monto, así se ve de un vistazo dónde se concentró el gasto. Tocando una categoría saltás a Movimientos con ese filtro aplicado. Si el período tiene más de 12 meses se muestran los 12 más recientes.
 
 El selector **ARS / USD / Ambas** de arriba también afecta al Resumen: en ARS y USD todo se convierte al MEP del día, y en "Ambas" se agrega en pesos y cada total muestra su equivalente en dólares abajo. Si no hay cotización disponible, aparece un aviso porque los montos de la otra moneda no se pueden convertir.
 
