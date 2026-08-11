@@ -845,7 +845,7 @@ function tablaPivot(movs, meses){
 /* ---------- MOVIMIENTOS ---------- */
 const MESES_ES=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
 function mesLabel(ym){ if(!ym||ym==="todos") return "Todos los meses"; const [y,m]=ym.split("-"); return `${MESES_ES[(+m)-1]} ${y}`; }
-let movFilter = {q:"", estado:"todos", cuenta:"todas", mes:undefined};
+let movFilter = {q:"", estado:"todos", cuenta:"todas", cat:"todas", mes:undefined};
 // Mes de imputación de un movimiento según la lente elegida (solo cambia para tarjeta)
 function movMesKey(m){
   if(state.cardLens==="resumen" && m.periodo) return m.periodo;
@@ -859,22 +859,34 @@ function viewMovimientos(){
   const movs = filteredMovs();
   const pend = state.movimientos.filter(m=>m.estado!=="categorizado").length;
   const cuentas = [...new Set(state.movimientos.map(m=>m.cuenta))].filter(Boolean);
-  const enMes = m => movFilter.mes==="todos" || movMesKey(m)===movFilter.mes;
   const hayTarjeta = state.movimientos.some(m=>m.periodo);
-  const gastoMes = state.movimientos.filter(m=>enMes(m)&&signo(m)<0);
-  const ingMes   = state.movimientos.filter(m=>enMes(m)&&signo(m)>0);
+  const base = movsFiltradosSinEstado();       // respeta mes, cuenta y categoría
+  const gastoMes = base.filter(m=>signo(m)<0);
+  const ingMes   = base.filter(m=>signo(m)>0);
   const lblMes = movFilter.mes==="todos" ? "(todos)" : mesLabel(movFilter.mes);
+  const catsUsadas = [...new Set(state.movimientos.map(m=>m.categoria).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es"));
+  const haySinCat = state.movimientos.some(m=>!m.categoria);
+  const filtroActivo = movFilter.cat!=="todas" || movFilter.cuenta!=="todas" || movFilter.q || movFilter.estado!=="todos";
   return `
   <div class="flexbtw"><h2 class="tab-title">Movimientos</h2>
-    <button class="btn primary sm" id="btnImport">⬆ Importar</button></div>
+    <div style="display:flex;gap:6px">
+      <button class="btn ghost sm" id="btnTransf">⇄ Transferencia</button>
+      <button class="btn primary sm" id="btnImport">⬆ Importar</button>
+    </div></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-    <select class="f" id="movMes" style="max-width:200px">
+    <select class="f" id="movMes" style="max-width:190px">
       <option value="todos" ${movFilter.mes==="todos"?"selected":""}>Todos los meses</option>
       ${meses.map(ym=>`<option value="${ym}" ${movFilter.mes===ym?"selected":""}>${mesLabel(ym)}</option>`).join("")}
+    </select>
+    <select class="f" id="movCat" style="max-width:190px">
+      <option value="todas" ${movFilter.cat==="todas"?"selected":""}>Todas las categorías</option>
+      ${haySinCat?`<option value="__sin__" ${movFilter.cat==="__sin__"?"selected":""}>— Sin categoría —</option>`:""}
+      ${catsUsadas.map(c=>`<option value="${esc(c)}" ${movFilter.cat===c?"selected":""}>${esc(c)}</option>`).join("")}
     </select>
     ${hayTarjeta?`<div class="curtoggle" id="lensToggle" title="Cómo se imputa el mes de los consumos de tarjeta">
       ${[["consumo","Consumo"],["resumen","Resumen"],["pago","Pago"]].map(([v,l])=>`<button data-lens="${v}" class="${state.cardLens===v?'on':''}">${l}</button>`).join("")}
     </div>`:""}
+    ${filtroActivo?`<button class="btn ghost sm" id="btnLimpiar">✕ Limpiar filtros</button>`:""}
   </div>
   ${hayTarjeta?`<div class="faint" style="font-size:11.5px;margin:-6px 2px 12px">Tarjeta imputada por ${state.cardLens==="consumo"?"fecha de consumo":state.cardLens==="resumen"?"período del resumen":"fecha de pago"}.</div>`:""}
   <div class="stat-grid">
@@ -885,7 +897,7 @@ function viewMovimientos(){
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     ${["todos","pendientes","categorizados"].map(e=>`<button class="pill ${movFilter.estado===e?'on':''}" data-est="${e}">${e[0].toUpperCase()+e.slice(1)}</button>`).join("")}
     ${pend?`<button class="btn ghost sm" id="btnAplicarReglas">✨ Aplicar reglas</button>`:""}
-    <button class="btn ghost sm" id="btnNuevo">＋ Manual</button>
+    <button class="btn ghost sm" id="btnNuevo">＋ Nuevo movimiento</button>
   </div>
   <input class="f" id="movSearch" placeholder="Buscar…" value="${esc(movFilter.q)}" style="margin-bottom:10px">
   ${cuentas.length>1?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
@@ -902,12 +914,22 @@ function signo(m){
   return m.monto<0 ? -1 : (/Gasto|Transferenc/i.test(m.tipo)? -1 : 1);
 }
 function esMesActual(f){ if(!f) return false; const d=new Date(); return f.slice(0,7)===d.toISOString().slice(0,7); }
+function matchCat(m){
+  if(movFilter.cat==="todas") return true;
+  if(movFilter.cat==="__sin__") return !m.categoria;
+  return m.categoria===movFilter.cat;
+}
+// mes + cuenta + categoría (lo que alimenta los KPIs de la pestaña)
+function movsFiltradosSinEstado(){
+  return state.movimientos.filter(m=>
+    (movFilter.mes==="todos" || !movFilter.mes || movMesKey(m)===movFilter.mes) &&
+    (movFilter.cuenta==="todas" || m.cuenta===movFilter.cuenta) &&
+    matchCat(m));
+}
 function filteredMovs(){
-  let l=state.movimientos.slice();
-  if(movFilter.mes && movFilter.mes!=="todos") l=l.filter(m=>movMesKey(m)===movFilter.mes);
+  let l=movsFiltradosSinEstado();
   if(movFilter.estado==="pendientes") l=l.filter(m=>m.estado!=="categorizado");
   if(movFilter.estado==="categorizados") l=l.filter(m=>m.estado==="categorizado");
-  if(movFilter.cuenta!=="todas") l=l.filter(m=>m.cuenta===movFilter.cuenta);
   if(movFilter.q){ const q=movFilter.q.toLowerCase(); l=l.filter(m=>(m.descripcion||"").toLowerCase().includes(q)||(m.categoria||"").toLowerCase().includes(q)); }
   return l;
 }
@@ -1059,14 +1081,18 @@ function bindContent(){
   c.querySelectorAll("[data-rcta]").forEach(b=> b.onclick=()=>{ resFilter.cuenta=b.dataset.rcta; render(); });
   c.querySelectorAll("[data-gocat]").forEach(el=> el.onclick=()=>{
     const cat = el.dataset.gocat;
-    movFilter.q = cat==="Sin categoría" ? "" : cat;
-    movFilter.estado = cat==="Sin categoría" ? "pendientes" : "todos";
+    movFilter.q = "";
+    movFilter.cat = cat==="Sin categoría" ? "__sin__" : cat;
+    movFilter.estado = "todos";
     movFilter.cuenta = resFilter.cuenta;
     movFilter.mes = /^\d{4}-\d{2}$/.test(resFilter.periodo) ? resFilter.periodo : "todos";
     state.tab="movimientos"; localStorage.setItem("mf_tab","movimientos"); window.scrollTo(0,0); render();
   });
   // filtros movimientos
   const mm=$("#movMes"); if(mm) mm.onchange=()=>{ movFilter.mes=mm.value; render(); };
+  const mc=$("#movCat"); if(mc) mc.onchange=()=>{ movFilter.cat=mc.value; render(); };
+  const bl=$("#btnLimpiar"); if(bl) bl.onclick=()=>{ movFilter.cat="todas"; movFilter.cuenta="todas"; movFilter.q=""; movFilter.estado="todos"; render(); };
+  const bt=$("#btnTransf"); if(bt) bt.onclick=openTransferModal;
   const lt=$("#lensToggle"); if(lt) lt.querySelectorAll("button").forEach(b=> b.onclick=()=>{ state.cardLens=b.dataset.lens; localStorage.setItem("mf_lens",state.cardLens); movFilter.mes=undefined; render(); });
   c.querySelectorAll("[data-est]").forEach(b=>b.onclick=()=>{movFilter.estado=b.dataset.est;render();});
   c.querySelectorAll("[data-cta]").forEach(b=>b.onclick=()=>{movFilter.cuenta=b.dataset.cta;render();});
@@ -1097,27 +1123,143 @@ function modal(html, cls){
   return o;
 }
 function catOptions(sel){ return CATS.map(c=>`<option ${c[0]===sel?'selected':''}>${c[0]}</option>`).join(""); }
+// nombres de cuenta conocidos: las cargadas en Patrimonio + las que aparecen en movimientos
+function cuentasDisponibles(){
+  return [...new Set(
+    state.cuentas.map(c=>c.nombre)
+      .concat(state.movimientos.map(m=>m.cuenta))
+      .concat(state.movimientos.map(m=>m.cuentaDestino))
+      .concat(["Efectivo","MercadoPago","Santander","Manual"])
+  )].filter(Boolean).sort((a,b)=>a.localeCompare(b,"es"));
+}
+const cuentaPorNombre = n => state.cuentas.find(c=>c.nombre===n);
+const monedaDeCuenta  = n => (cuentaPorNombre(n)||{}).moneda || "ARS";
+const TIPOS_MOV = ["Gasto","Ingresos","Transferencia interna","Transferencias","Pago tarjeta","Rendimientos","Inversiones"];
+// Signo canónico según el tipo: los gastos se guardan negativos y los ingresos positivos
+function normalizarMonto(monto, tipo){
+  const v = Math.abs(parseFloat(monto)||0);
+  if(/Ingreso|Rendimiento/i.test(tipo)) return v;
+  if(/Gasto|Transferencia|Pago tarjeta/i.test(tipo)) return -v;
+  return parseFloat(monto)||0;   // Inversiones: puede ir en cualquier sentido
+}
+
+/* --- Modal Transferencia entre cuentas propias --- */
+function openTransferModal(){
+  const cuentas = cuentasDisponibles();
+  if(cuentas.length<2){ toast("Necesitás al menos dos cuentas. Cargalas en Patrimonio."); return; }
+  const hoy = new Date().toISOString().slice(0,10);
+  const o = modal(`
+    <button class="close">&times;</button>
+    <h3>Transferencia entre cuentas</h3>
+    <div class="faint" style="font-size:12px;margin-bottom:4px">No cuenta como ingreso ni como gasto: queda neutra en los KPIs.</div>
+    <div class="row2">
+      <div><label class="f">Desde</label><select class="f" id="t_org">${cuentas.map(c=>`<option>${esc(c)}</option>`).join("")}</select></div>
+      <div><label class="f">Hacia</label><select class="f" id="t_dst">${cuentas.map((c,i)=>`<option ${i===1?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
+    </div>
+    <div class="row2">
+      <div><label class="f">Monto que sale</label><input class="f" type="number" step="0.01" min="0" id="t_monto" placeholder="0"></div>
+      <div><label class="f">Moneda</label><select class="f" id="t_moneda"><option>ARS</option><option>USD</option></select></div>
+    </div>
+    <div id="t_dstBox" style="display:none">
+      <label class="f">Monto que llega <span class="faint" id="t_dstCur"></span></label>
+      <input class="f" type="number" step="0.01" min="0" id="t_montoDst" placeholder="0">
+      <div class="faint" style="font-size:11.5px;margin-top:5px" id="t_dstHint"></div>
+    </div>
+    <div class="row2">
+      <div><label class="f">Fecha</label><input class="f" type="date" id="t_fecha" value="${hoy}"></div>
+      <div><label class="f">Descripción</label><input class="f" id="t_desc" placeholder="(automática)"></div>
+    </div>
+    <label class="f" style="margin-top:12px"><input type="checkbox" id="t_saldos" checked style="width:auto;margin-right:6px">Actualizar los saldos de ambas cuentas</label>
+    <div class="faint" style="font-size:11.5px;margin-top:2px" id="t_saldoInfo"></div>
+    <div style="display:flex;gap:8px;margin-top:16px"><button class="btn primary block" id="t_save">Guardar transferencia</button></div>`);
+
+  const g = id => $("#"+id,o);
+  function sync(tomarMonedaDeCuenta){
+    const org=g("t_org").value, dst=g("t_dst").value;
+    const cOrg=cuentaPorNombre(org), cDst=cuentaPorNombre(dst);
+    if(cOrg && tomarMonedaDeCuenta) g("t_moneda").value = cOrg.moneda||"ARS";   // sugerida, pero editable
+    const monOrg=g("t_moneda").value, monDst=cDst? (cDst.moneda||"ARS") : monOrg;
+    const distinta = !!cDst && monDst!==monOrg;
+    g("t_dstBox").style.display = distinta ? "" : "none";
+    if(distinta){
+      g("t_dstCur").textContent = "("+monDst+")";
+      const r=rate(), m=parseFloat(g("t_monto").value)||0;
+      const sug = r ? (monOrg==="ARS" ? m/r : m*r) : 0;
+      if(sug && !g("t_montoDst").value) g("t_montoDst").value = Math.round(sug*100)/100;
+      g("t_dstHint").textContent = r ? `Sugerido al MEP ($${nf(r)} por dólar). Editalo con la cotización real de tu operación.`
+                                     : "Sin cotización cargada: poné el monto exacto que llegó.";
+    }
+    const info=[];
+    if(cOrg) info.push(`${org}: ${showAmt(Math.abs(+cOrg.saldo||0),cOrg.moneda||"ARS")}`);
+    if(cDst) info.push(`${dst}: ${showAmt(Math.abs(+cDst.saldo||0),cDst.moneda||"ARS")}`);
+    g("t_saldoInfo").textContent = info.length
+      ? "Saldos actuales — "+info.join(" · ")
+      : "Ninguna de las dos está cargada en Patrimonio, así que no hay saldo para ajustar.";
+  }
+  g("t_org").onchange=()=>{ g("t_montoDst").value=""; sync(true); };
+  g("t_dst").onchange=()=>{ g("t_montoDst").value=""; sync(false); };
+  g("t_moneda").onchange=()=>{ g("t_montoDst").value=""; sync(false); };
+  g("t_monto").oninput=()=>{ g("t_montoDst").value=""; sync(false); };
+  sync(true);
+
+  g("t_save").onclick=async()=>{
+    const btn=g("t_save"); if(btn.disabled) return;
+    const org=g("t_org").value, dst=g("t_dst").value;
+    const monto=Math.abs(parseFloat(g("t_monto").value)||0);
+    if(org===dst){ toast("Elegí dos cuentas distintas"); return; }
+    if(!monto){ toast("Poné un monto mayor a cero"); return; }
+    const moneda=g("t_moneda").value;
+    const cDst=cuentaPorNombre(dst), monDst=cDst?(cDst.moneda||"ARS"):moneda;
+    const distinta = !!cDst && monDst!==moneda;
+    const montoDst = distinta ? Math.abs(parseFloat(g("t_montoDst").value)||0) : monto;
+    if(distinta && !montoDst){ toast("Poné cuánto llegó a la cuenta destino"); return; }
+    btn.disabled=true; btn.innerHTML='<span class="spin"></span> Guardando…';
+    try{
+      const mov={
+        id:uid(), fecha:g("t_fecha").value, descripcion: g("t_desc").value.trim() || `Transferencia ${org} → ${dst}`,
+        moneda, monto:-monto, tipo:"Transferencia interna", categoria:"", subcategoria:"",
+        cuenta:org, cuentaDestino:dst, fuente:"manual", estado:"categorizado", cuotas:"",
+        observaciones: distinta ? `Llegaron ${montoDst} ${monDst}` : "", periodo:"", fechaPago:""
+      };
+      mov.hash = hashMov(mov);
+      await api({action:"save", mov});
+      state.movimientos.unshift(mov);
+      if(g("t_saldos").checked){
+        const cOrg=cuentaPorNombre(org);
+        if(cOrg) await guardarSaldo(cOrg, (+cOrg.saldo||0) - monto);
+        if(cDst) await guardarSaldo(cDst, (+cDst.saldo||0) + montoDst);
+      }
+      o.remove(); render(); toast("Transferencia guardada");
+    }catch(err){ btn.disabled=false; btn.textContent="Guardar transferencia"; toast("Error: "+err.message); }
+  };
+}
+async function guardarSaldo(cuenta, nuevo){
+  const upd={...cuenta, saldo:Math.round(nuevo*100)/100, fechaSaldo:new Date().toISOString().slice(0,10)};
+  await api({action:"saveCuenta", cuenta:upd});
+  state.cuentas = state.cuentas.map(x=>x.id===upd.id?upd:x);
+}
 
 /* --- Modal Movimiento (editar/categorizar) --- */
 function openMovModal(m){
   const isNew=!m;
-  m = m || {id:uid(), fecha:new Date().toISOString().slice(0,10), descripcion:"", moneda:"ARS", monto:0, tipo:"Gasto", categoria:"", cuenta:"Manual", fuente:"manual", estado:"pendiente", cuotas:""};
-  const cuentas=[...new Set(state.movimientos.map(x=>x.cuenta).concat(["Manual","Efectivo","MercadoPago","Santander"]))].filter(Boolean);
+  m = m || {id:uid(), fecha:new Date().toISOString().slice(0,10), descripcion:"", moneda:"ARS", monto:0, tipo:"Gasto", categoria:"", cuenta:(state.cuentas[0]||{}).nombre||"Efectivo", fuente:"manual", estado:"pendiente", cuotas:""};
+  const cuentas=cuentasDisponibles();
   const o=modal(`
     <button class="close">&times;</button>
-    <h3>${isNew?"Nuevo movimiento":"Movimiento"}</h3>
+    <h3>${isNew?"Nuevo movimiento":"Editar movimiento"}</h3>
+    ${isNew?"":`<div class="faint" style="font-size:11.5px;margin-bottom:2px">Origen: ${esc(m.fuente||"manual")}${m.hash?" · importado":""}</div>`}
     <div class="row2">
       <div><label class="f">Fecha</label><input class="f" type="date" id="m_fecha" value="${esc(isoDate(m.fecha))}"></div>
-      <div><label class="f">Cuenta</label><select class="f" id="m_cuenta">${cuentas.map(c=>`<option ${c===m.cuenta?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
+      <div><label class="f">Cuenta</label><select class="f" id="m_cuenta">${cuentas.map(c=>`<option ${c===m.cuenta?'selected':''}>${esc(c)}</option>`).join("")}${cuentas.indexOf(m.cuenta)<0&&m.cuenta?`<option selected>${esc(m.cuenta)}</option>`:""}</select></div>
     </div>
-    <label class="f">Descripción</label><input class="f" id="m_desc" value="${esc(m.descripcion)}">
+    <label class="f">Descripción</label><input class="f" id="m_desc" value="${esc(m.descripcion)}" placeholder="Ej: Supermercado Coto">
     <div class="row2">
-      <div><label class="f">Monto</label><input class="f" type="number" step="0.01" id="m_monto" value="${m.monto}"></div>
+      <div><label class="f">Monto <span class="faint" id="m_signo"></span></label><input class="f" type="number" step="0.01" id="m_monto" value="${Math.abs(m.monto)||""}" placeholder="0"></div>
       <div><label class="f">Moneda</label><select class="f" id="m_moneda"><option ${m.moneda==="ARS"?"selected":""}>ARS</option><option ${m.moneda==="USD"?"selected":""}>USD</option></select></div>
     </div>
     <div class="row2">
+      <div><label class="f">Tipo</label><select class="f" id="m_tipo">${TIPOS_MOV.map(t=>`<option ${t===m.tipo?'selected':''}>${t}</option>`).join("")}</select></div>
       <div><label class="f">Categoría</label><select class="f" id="m_cat"><option value="">— sin categoría —</option>${catOptions(m.categoria)}</select></div>
-      <div><label class="f">Tipo</label><select class="f" id="m_tipo">${["Gasto","Ingresos","Transferencia interna","Transferencias","Pago tarjeta","Rendimientos","Inversiones"].map(t=>`<option ${t===m.tipo?'selected':''}>${t}</option>`).join("")}</select></div>
     </div>
     <div id="m_transfBox" style="${/transferencia interna/i.test(m.tipo)?'':'display:none'}">
       <label class="f">Cuenta contraparte <span class="faint">(a/desde dónde fue el dinero)</span></label>
@@ -1131,16 +1273,28 @@ function openMovModal(m){
     <label class="f"><input type="checkbox" id="m_regla" style="width:auto;margin-right:6px">Crear regla para autocategorizar descripciones similares</label>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button class="btn primary block" id="m_save">Guardar</button>
-      ${isNew?"":`<button class="btn ghost" id="m_del">🗑</button>`}
+      ${isNew?"":`<button class="btn ghost" id="m_del" title="Borrar movimiento">🗑</button>`}
     </div>`);
-  $("#m_tipo",o).onchange=()=>{ $("#m_transfBox",o).style.display = /transferencia interna/i.test($("#m_tipo",o).value) ? "" : "none"; };
+  const tipoSel=$("#m_tipo",o);
+  function syncTipo(){
+    const t=tipoSel.value;
+    $("#m_transfBox",o).style.display = /transferencia interna/i.test(t) ? "" : "none";
+    const s=$("#m_signo",o);
+    s.textContent = /Ingreso|Rendimiento/i.test(t) ? "(entra)" : /Inversiones/i.test(t) ? "(+ entra / – sale)" : "(sale)";
+  }
+  tipoSel.onchange=syncTipo; syncTipo();
   $("#m_save",o).onclick=async()=>{
     const btn=$("#m_save",o); if(btn.disabled) return;
+    const desc=$("#m_desc",o).value.trim();
+    const montoRaw=parseFloat($("#m_monto",o).value);
+    if(!desc){ toast("Falta la descripción"); $("#m_desc",o).focus(); return; }
+    if(!montoRaw){ toast("El monto tiene que ser distinto de cero"); $("#m_monto",o).focus(); return; }
+    if(!$("#m_fecha",o).value){ toast("Falta la fecha"); return; }
     btn.disabled=true; btn.innerHTML='<span class="spin"></span> Guardando…';
     try{
     const upd={...m,
-      fecha:$("#m_fecha",o).value, cuenta:$("#m_cuenta",o).value, descripcion:$("#m_desc",o).value,
-      monto:parseFloat($("#m_monto",o).value)||0, moneda:$("#m_moneda",o).value,
+      fecha:$("#m_fecha",o).value, cuenta:$("#m_cuenta",o).value, descripcion:desc,
+      monto:normalizarMonto(montoRaw, $("#m_tipo",o).value), moneda:$("#m_moneda",o).value,
       categoria:$("#m_cat",o).value, tipo:$("#m_tipo",o).value,
       estado: ($("#m_cat",o).value || $("#m_tipo",o).value==="Transferencia interna") ? "categorizado":"pendiente"
     };

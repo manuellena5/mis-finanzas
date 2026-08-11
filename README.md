@@ -70,9 +70,24 @@ Es la primera pestaña y la que abre por defecto. Todo lo que muestra responde a
 
 El selector **ARS / USD / Ambas** de arriba también afecta al Resumen: en ARS y USD todo se convierte al MEP del día, y en "Ambas" se agrega en pesos y cada total muestra su equivalente en dólares abajo. Si no hay cotización disponible, aparece un aviso porque los montos de la otra moneda no se pueden convertir.
 
+## Cargar movimientos a mano
+
+En **Movimientos** tenés dos botones:
+
+- **＋ Nuevo movimiento**: abre el formulario de alta. Ahí mismo editás o borrás cualquier movimiento existente (tocá la fila para abrirlo). El signo lo pone la app según el tipo — cargás siempre el monto en positivo y un "Gasto" se guarda en negativo, un "Ingreso" en positivo. Pide descripción, monto y fecha antes de guardar.
+- **⇄ Transferencia**: para mover plata entre tus propias cuentas (ver abajo).
+
+También podés filtrar la lista por **mes**, **categoría**, **cuenta** y estado, y combinarlos entre sí. Los totales de gasto e ingreso de la pestaña reflejan los filtros aplicados, así que si elegís una categoría ves cuánto llevás gastado solo en ella. El botón **✕ Limpiar filtros** aparece cuando hay alguno activo.
+
 ## Transferencias entre cuentas propias
 
-Cuando movés plata entre tus cuentas (ej. de MercadoPago a Santander), esos movimientos **no deberían contar como ingreso ni gasto**. Marcá el movimiento con tipo **"Transferencia interna"** y elegí la **cuenta contraparte** (a/desde dónde fue el dinero). Esos movimientos quedan neutros en los KPIs (no suman ni restan) y se muestran como `Cuenta A → Cuenta B`.
+Cuando movés plata entre tus cuentas (ej. de MercadoPago a Santander), esos movimientos **no deberían contar como ingreso ni gasto**. El botón **⇄ Transferencia** carga una sola línea en la cuenta de origen, con tipo "Transferencia interna" y la cuenta destino como contraparte: queda neutra en los KPIs y se muestra como `Cuenta A → Cuenta B`.
+
+Por defecto **ajusta los saldos** de ambas cuentas en Patrimonio (resta en origen, suma en destino). Tené en cuenta que si después importás el resumen del banco, el saldo importado pisa al ajustado a mano — destildá esa opción si preferís que los saldos vengan solo de los resúmenes.
+
+Si las dos cuentas están en monedas distintas, el formulario pide además **cuánto llegó** a la cuenta destino: sugiere la conversión al MEP del día pero podés reemplazarla por la cotización real de tu operación. El movimiento se guarda en la moneda de origen y el monto recibido queda anotado en observaciones.
+
+También podés marcar a mano cualquier movimiento ya cargado con tipo **"Transferencia interna"** y elegir la **cuenta contraparte**, que es lo que pasa cuando los detecta una regla al importar.
 
 Para automatizarlo, creá una **regla** con tu nombre como patrón (ej. "manuel alejandro ellena") y Tipo "Transferencia interna": todas tus transferencias entre cuentas propias se marcan solas. Los pagos de tarjeta también se tratan como neutros (ya están contados en los consumos).
 
