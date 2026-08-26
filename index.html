@@ -180,6 +180,7 @@ const tipoInfo = t => TIPOS_CUENTA.find(x => x.v === t) || TIPOS_CUENTA[5];
 /* ══════════════════════ ESTADO ══════════════════════ */
 const state = {
   url:      localStorage.getItem("mf_url") || "",
+  token:    localStorage.getItem("mf_token") || "",       // token compartido del backend
   cur:      localStorage.getItem("mf_cur") || "ARS",          // ARS | USD | ambas
   mep:      JSON.parse(localStorage.getItem("mf_mep") || "null"), // {compra,venta,fecha,fuente,manual}
   tab:      localStorage.getItem("mf_tab") || "resumen",
@@ -305,11 +306,13 @@ function renderMep(){
 /* ══════════════════════ API ══════════════════════ */
 async function api(payload){
   if(!state.url) throw new Error("Falta configurar la URL del backend en Ajustes.");
+  if(!state.token) throw new Error("Falta el token del backend en Ajustes.");
   const res = await fetch(state.url, {
     method: "POST",
     // text/plain evita el preflight CORS con Apps Script
     headers: {"Content-Type":"text/plain;charset=utf-8"},
-    body: JSON.stringify(payload)
+    // el token viaja en el cuerpo, nunca en la URL (no queda en logs ni historial)
+    body: JSON.stringify({...payload, token: state.token})
   });
   const txt = await res.text();
   let data;
@@ -326,7 +329,7 @@ function ordenarCuentas(list){
 }
 
 async function bootstrap(silent){
-  if(!state.url){ state.conectado = false; render(); return false; }
+  if(!state.url || !state.token){ state.conectado = false; render(); return false; }
   state.cargando = true; state.error = ""; render();
   try{
     const d = await api({action:"bootstrap"});
@@ -370,7 +373,7 @@ function renderCurToggle(){
 
 function renderBrandSub(){
   const s = $("#brandSub");
-  if(!state.url) s.textContent = "sin conectar";
+  if(!state.url || !state.token) s.textContent = "sin conectar";
   else if(state.cargando) s.textContent = "cargando…";
   else if(state.conectado) s.textContent = state.cuentas.length + (state.cuentas.length === 1 ? " cuenta" : " cuentas");
   else s.textContent = "sin conexión";
@@ -411,15 +414,18 @@ function viewAjustes(){
 }
 
 function cardConexion(){
-  let status = `<div class="status">Pegá la URL <b>/exec</b> de tu Apps Script para conectar la app con tu planilla.</div>`;
+  let status = `<div class="status">Pegá la URL <b>/exec</b> y el token de tu Apps Script para conectar la app con tu planilla.</div>`;
   if(state.cargando)       status = `<div class="status">Conectando…</div>`;
   else if(state.conectado) status = `<div class="status ok">Conectado · ${state.cuentas.length} ${state.cuentas.length===1?"cuenta":"cuentas"}</div>`;
   else if(state.error)     status = `<div class="status err">${esc(state.error)}</div>`;
   return `
   <div class="card">
-    <div class="card-head"><h3>Conexión</h3></div>
+    <div class="card-head"><h3>Conexión</h3>${state.token ? `<span class="tag ok">con token</span>` : `<span class="tag off">sin token</span>`}</div>
     <p class="hint">Google Apps Script publicado como aplicación web (termina en <code>/exec</code>).</p>
     <input class="f" id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(state.url)}">
+    <label class="f" for="cfgToken">Token</label>
+    <input class="f" id="cfgToken" type="password" autocomplete="off" spellcheck="false" placeholder="el que devolvió generarToken()" value="${esc(state.token)}">
+    <p class="hint" style="margin:6px 0 0">Sin el token la URL no devuelve datos. Queda guardado sólo en este navegador.</p>
     <div class="btn-row">
       <button class="btn primary sm" id="btnConectar">Guardar y conectar</button>
       <button class="btn ghost sm" id="btnProbar">Probar conexión</button>
@@ -510,20 +516,28 @@ function filaCuenta(c){
 
 function bindAjustes(){
   const url = $("#cfgUrl");
+  const tok = $("#cfgToken");
+
+  // Toma URL + token de los inputs; false si falta alguno.
+  function tomarCredenciales(){
+    const u = url.value.trim();
+    if(!u){ toast("Pegá la URL del Apps Script"); url.focus(); return false; }
+    const t = tok.value.trim();
+    if(!t){ toast("Pegá el token del backend"); tok.focus(); return false; }
+    state.url = u; state.token = t;
+    return true;
+  }
 
   $("#btnConectar").onclick = async () => {
-    const v = url.value.trim();
-    if(!v){ toast("Pegá la URL del Apps Script"); url.focus(); return; }
-    state.url = v;
-    localStorage.setItem("mf_url", v);
+    if(!tomarCredenciales()) return;
+    localStorage.setItem("mf_url", state.url);
+    localStorage.setItem("mf_token", state.token);
     await bootstrap(false);
   };
 
   $("#btnProbar").onclick = async (ev) => {
     const b = ev.currentTarget, prev = b.textContent;
-    const v = url.value.trim();
-    if(!v){ toast("Pegá la URL del Apps Script"); url.focus(); return; }
-    state.url = v;
+    if(!tomarCredenciales()) return;
     b.disabled = true; b.textContent = "Probando…";
     try{
       const d = await api({action:"bootstrap"});
@@ -674,7 +688,7 @@ $("#mepChip").onclick = () => fetchMep(false);
   render();
   // La cotización manual manda: no la pisamos con la online.
   if(!(state.mep && state.mep.manual)) fetchMep(true);
-  if(state.url) bootstrap(true);
+  if(state.url && state.token) bootstrap(true);
 })();
 
 /* PWA */

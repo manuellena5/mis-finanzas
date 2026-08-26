@@ -4,7 +4,7 @@ App web personal de finanzas (un solo usuario): movimientos uno por uno (Ingreso
 
 HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Google Sheets** como base de datos vía **Google Apps Script**. Se publica en GitHub Pages.
 
-> Reescritura desde cero. La v1 (importador de resúmenes) vive en el historial de git; sus parsers se reusan en la Fase 7. El roadmap completo está en [`PLAN.md`](PLAN.md).
+> Reescritura desde cero. La v1 (importador de resúmenes) vive en el historial de git; sus parsers se reusan en la Fase 7. El roadmap completo está en `PLAN.md` (local, no versionado).
 
 ## Estado
 
@@ -27,22 +27,39 @@ Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 | `index.html` | Toda la app: markup, estilos y lógica |
 | `Code.gs` | Backend de Apps Script (pegar en el editor de la planilla) |
 | `manifest.json`, `sw.js`, `icon-*.png` | PWA: instalación y app-shell offline |
-| `PLAN.md` | Plan maestro: arquitectura, modelo de datos, fases |
-| `PROMPT_faseN_*.md` | Prompt autónomo de cada fase |
+| `PLAN.md`, `PROMPT_faseN_*.md` | Plan maestro y prompt de cada fase (locales, en `.gitignore`) |
 
 ## Setup del backend (Google Apps Script) — una sola vez
 
 1. Creá una **planilla nueva** en [sheets.google.com](https://sheets.google.com) (será la base de datos).
 2. En la planilla: **Extensiones → Apps Script**.
 3. Borrá el código de ejemplo, pegá el contenido de **`Code.gs`** y guardá (Ctrl+S).
-4. **Implementar → Nueva implementación** → ⚙ tipo **Aplicación web**.
-5. *Ejecutar como*: **Yo**. *Quién tiene acceso*: **Cualquiera con el enlace** (necesario para abrirla desde el celular sin loguearte).
-6. **Implementar** → autorizá los permisos → copiá la **URL** que termina en `/exec`.
-7. En la app: **Ajustes → Conexión**, pegá la URL y tocá **Guardar y conectar**.
+4. En el selector de funciones elegí **`generarToken`** y tocá **Ejecutar**. Autorizá los permisos y copiá el token que aparece en el **registro de ejecución**.
+5. **Implementar → Nueva implementación** → ⚙ tipo **Aplicación web**.
+6. *Ejecutar como*: **Yo**. *Quién tiene acceso*: **Cualquiera con el enlace** (necesario para abrirla desde el celular sin loguearte).
+7. **Implementar** → copiá la **URL** que termina en `/exec`.
+8. En la app: **Ajustes → Conexión**, pegá la URL y el token, y tocá **Guardar y conectar**.
 
 Las hojas (`Cuentas`, `Config`, y las que sumen las fases siguientes) se crean solas la primera vez, con sus encabezados.
 
-La URL del backend se guarda en el `localStorage` del navegador: no viaja al repo ni queda hardcodeada.
+La URL y el token se guardan en el `localStorage` del navegador: no viajan al repo ni quedan hardcodeados.
+
+### Al actualizar el backend (cada fase nueva)
+
+Pegá el código, guardá, y después **Implementar → Administrar implementaciones → ✏️ editar → Versión: Nueva versión → Implementar**. Así la URL `/exec` sigue siendo la misma.
+
+Si en cambio creás una *implementación nueva*, te da otra URL y la vieja sigue sirviendo el código viejo — el síntoma típico es un error tipo `Accion desconocida: bootstrap`. Para saber qué versión está publicada, abrí tu URL `/exec` en el navegador: el JSON de salud dice `version` y `tokenConfigurado`.
+
+## Seguridad
+
+La app se publica como *Cualquiera con el enlace* porque el `fetch` del navegador desde GitHub Pages no puede autenticarse con tu cuenta de Google (sin sesión de origen cruzado, CORS lo bloquea). Para que la URL sola no alcance:
+
+- Toda acción exige un **token compartido**, guardado en las **Propiedades del script** (⚙ Configuración del proyecto). Nunca está en `Code.gs`, así que no viaja al repo público.
+- El token va en el **cuerpo** del POST, nunca en la URL: no queda en historiales ni en logs de referer.
+- Si falta el token en el backend, se rechaza todo (falla cerrado). El único endpoint abierto es el chequeo de salud de `doGet`, que no devuelve datos.
+- Si el token se filtra, corré `generarToken()` de nuevo: invalida el anterior al instante.
+
+Alternativa más fuerte, para más adelante: login con Google Identity Services en el frontend y verificación del `id_token` (y de tu email) en el backend. Requiere proyecto de GCP, client ID y orígenes autorizados.
 
 ## Publicar en GitHub Pages
 

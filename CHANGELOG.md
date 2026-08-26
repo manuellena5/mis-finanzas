@@ -1,5 +1,14 @@
 # Changelog
 
+## Fase 1.1 — Token de acceso (2026-08-26)
+
+La web app se publica como "Cualquiera con el enlace" (el `fetch` desde GitHub Pages no puede usar la sesión de Google), así que ahora **toda acción exige un token compartido**:
+
+- `Code.gs`: token en las Propiedades del script (`MF_TOKEN`), nunca en el código. `generarToken()` lo crea y lo deja en el registro. `handleAction` valida antes de rutear y **falla cerrado** si no hay token configurado. Comparación en tiempo constante. `doGet` sin `action` sigue abierto como chequeo de salud, pero sólo informa `version` y `tokenConfigurado` — no devuelve datos.
+- `index.html`: campo de token (tipo password) en Ajustes → Conexión, guardado en `localStorage` (`mf_token`); `api()` lo manda en el **cuerpo** del POST, nunca en la URL. Sin token, la app no intenta conectarse.
+
+Para rotarlo: ejecutar `generarToken()` otra vez y volver a pegarlo en Ajustes.
+
 ## Fase 1 — Esqueleto (2026-08-26) ✅
 
 Reescritura desde cero: PWA + backend + cotización + ABM Cuentas. La v1 (importador de resúmenes) queda en el historial de git.

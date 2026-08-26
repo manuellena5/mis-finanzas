@@ -7,10 +7,24 @@
    1. Creá una planilla nueva en Google Sheets (será la base de datos).
    2. Extensiones → Apps Script. Borrá todo y pegá este código.
    3. Guardá (Ctrl+S).
-   4. Implementar → Nueva implementación → Tipo: Aplicación web.
-   5. Ejecutar como: Yo.  Quién tiene acceso: Cualquiera con el enlace.
-   6. Implementar → autorizá → copiá la URL /exec.
-   7. Pegá esa URL en la app, pestaña Ajustes → Conexión.
+   4. Ejecutá una vez la función `generarToken` (selector de funciones → Ejecutar).
+      Autorizá los permisos y copiá el token que aparece en el registro.
+   5. Implementar → Nueva implementación → Tipo: Aplicación web.
+   6. Ejecutar como: Yo.  Quién tiene acceso: Cualquiera con el enlace.
+   7. Implementar → copiá la URL /exec.
+   8. Pegá la URL y el token en la app, pestaña Ajustes → Conexión.
+
+   AL ACTUALIZAR EL CÓDIGO (cada fase nueva): pegá el código, guardá y andá a
+   Implementar → Administrar implementaciones → ✏️ (editar) → Versión: Nueva
+   versión → Implementar. Así la URL /exec sigue siendo la misma.
+   Si en vez de eso creás una implementación nueva, te da otra URL y la vieja
+   sigue sirviendo el código viejo.
+
+   SEGURIDAD: la app se publica como "Cualquiera con el enlace" porque el fetch
+   del navegador desde GitHub Pages no puede autenticarse con tu cuenta. Por eso
+   toda acción exige un token compartido, guardado en las Propiedades del script
+   (nunca en este archivo, que sí va al repo público). Sin el token, la URL no
+   devuelve datos.
 
    IMPORTANTE: al agregar columnas en fases futuras, agregarlas SIEMPRE
    al final del array de columnas. Nunca reordenar.
@@ -21,6 +35,33 @@ const CONFIG_SHEET  = "Config";
 
 const CUENTAS_COLS = ["ID","Nombre","Tipo","Moneda","SaldoInicial","FechaInicial","EnPatrimonio","Orden","Activo"];
 const CONFIG_COLS  = ["clave","valor"];
+
+/* ───────── Token ─────────
+   Vive en las Propiedades del script, no en el código. Para verlo o cambiarlo:
+   Configuración del proyecto ⚙ → Propiedades del script.                      */
+const TOKEN_KEY = "MF_TOKEN";
+
+function getToken() {
+  return String(PropertiesService.getScriptProperties().getProperty(TOKEN_KEY) || "").trim();
+}
+
+/** Ejecutar UNA vez desde el editor: genera el token y lo deja en el registro. */
+function generarToken() {
+  const t = Utilities.getUuid().replace(/-/g, "");
+  PropertiesService.getScriptProperties().setProperty(TOKEN_KEY, t);
+  Logger.log("Token de Mis Finanzas (pegalo en Ajustes → Conexión):\n" + t);
+  return t;
+}
+
+/** Compara sin cortar en la primera diferencia. */
+function tokenValido(recibido) {
+  const esperado = getToken();
+  const a = String(recibido || "");
+  if (!esperado || a.length !== esperado.length) return false;
+  let dif = 0;
+  for (let i = 0; i < esperado.length; i++) dif |= a.charCodeAt(i) ^ esperado.charCodeAt(i);
+  return dif === 0;
+}
 
 /* ───────── Routing ───────── */
 function doPost(e) {
@@ -38,10 +79,24 @@ function doGet(e) {
     try { return jsonResponse(handleAction(e.parameter)); }
     catch (err) { return jsonResponse({ ok:false, error: String(err && err.message || err) }); }
   }
-  return jsonResponse({ ok:true, msg:"Mis Finanzas API activa", version:"fase1" });
+  // Chequeo de salud: no devuelve datos, sólo confirma qué código está publicado.
+  return jsonResponse({
+    ok: true,
+    msg: "Mis Finanzas API activa",
+    version: "fase1",
+    auth: "token",
+    tokenConfigurado: !!getToken()
+  });
 }
 
 function handleAction(data) {
+  if (!getToken()) {
+    return { ok:false, error:"El backend no tiene token configurado. Ejecutá la función generarToken() desde el editor de Apps Script." };
+  }
+  if (!tokenValido(data.token)) {
+    return { ok:false, error:"Token inválido. Revisá Ajustes → Conexión." };
+  }
+
   switch (data.action) {
     case "ping":         return { ok:true, msg:"pong" };
 
