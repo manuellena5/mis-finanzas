@@ -135,6 +135,19 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 
 .avisocot{font-size:12px;color:var(--danger);background:var(--danger-bg);border-radius:9px;padding:8px 11px;margin-bottom:10px;line-height:1.5}
 
+/* Resumen */
+.hero{background:var(--green-bg);border:1px solid var(--green-line);border-radius:var(--radius);padding:15px 17px;margin-bottom:12px}
+.hero .lbl{font-size:10px;color:var(--green);text-transform:uppercase;letter-spacing:.06em;font-weight:700;opacity:.75}
+.hero .v{font-size:27px;font-weight:700;line-height:1.15;margin-top:4px;font-family:'DM Mono',ui-monospace,monospace;overflow-wrap:anywhere}
+.hero .u{font-size:12px;color:var(--muted);margin-top:3px}
+.bars{display:flex;flex-direction:column;gap:11px;margin-top:12px}
+.bar .bl{display:flex;align-items:center;gap:7px;font-size:13px;margin-bottom:5px}
+.bar .bl .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.bar .bl .pct{color:var(--faint);font-size:11.5px;flex-shrink:0}
+.bar .bl .val{font-weight:600;font-size:12.5px;flex-shrink:0}
+.track{height:7px;background:#f1f5f9;border-radius:4px;overflow:hidden}
+.fill{height:100%;border-radius:4px;min-width:2px}
+
 .filtros{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
 .pill{padding:6px 12px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:12px;font-weight:500;cursor:pointer}
 .pill.on{border-color:var(--green);background:var(--green-bg);color:var(--green);font-weight:600}
@@ -271,6 +284,7 @@ const state = {
   modosPago:  [],
   movimientos: [],
   mes:      "",                                               // "YYYY-MM" que se está mirando
+  grafico:  "Egreso",                                         // qué muestra el gráfico del Resumen
   filtros:  {tipo:"todos", cuenta:"", categoria:"", texto:""},
   config:   {},
   conectado: false,
@@ -345,6 +359,41 @@ function convertir(monto, moneda, cur, tc){
   if(cur === "USD") return moneda === "ARS" ? n / tc : n;
   return moneda === "USD" ? n * tc : n;
 }
+/* ── Saldos ──
+   El saldo de una cuenta es su SaldoInicial más lo que entró y salió, en la
+   moneda de la cuenta (los movimientos siempre están en esa moneda). */
+function saldosPorCuenta(hasta){
+  const tope = hasta || "9999-12-31";
+  const s = {};
+  for(const c of state.cuentas){
+    s[c.id] = (c.fechaInicial && isoDate(c.fechaInicial) > tope) ? 0 : (+c.saldoInicial || 0);
+  }
+  for(const m of state.movimientos){
+    if(m.fecha > tope) continue;
+    if(m.tipo === "Ingreso"){ if(m.cuenta in s) s[m.cuenta] += +m.monto || 0; }
+    else if(m.tipo === "Egreso"){ if(m.cuenta in s) s[m.cuenta] -= +m.monto || 0; }
+    else if(m.tipo === "Interno"){
+      if(m.cuenta in s) s[m.cuenta] -= +m.monto || 0;
+      if(m.cuentaDestino in s) s[m.cuentaDestino] += (m.montoDestino == null ? +m.monto : +m.montoDestino) || 0;
+    }
+  }
+  return s;
+}
+
+/** Patrimonio: suma de las cuentas marcadas `EnPatrimonio`, al dólar de hoy. */
+function patrimonio(hasta){
+  const s = saldosPorCuenta(hasta);
+  const t = {ars:0, usd:0, sinCotizacion:0};
+  for(const c of state.cuentas){
+    if(!c.enPatrimonio) continue;
+    const ars = convertir(s[c.id], c.moneda, "ARS", rate());
+    const usd = convertir(s[c.id], c.moneda, "USD", rate());
+    if(ars == null || usd == null){ t.sinCotizacion++; continue; }
+    t.ars += ars; t.usd += usd;
+  }
+  return t;
+}
+
 /** Cotización de un movimiento: la congelada; si le falta, la de hoy. */
 const tcDe = m => (+m.cotizacion > 0 ? +m.cotizacion : rate());
 /** Valor de un movimiento en la moneda de vista (histórico). */
@@ -557,6 +606,7 @@ function render(){
   const c = $("#content");
   if(state.tab === "ajustes"){ c.innerHTML = viewAjustes(); bindAjustes(); }
   else if(state.tab === "movimientos"){ c.innerHTML = viewMovimientos(); bindMovimientos(); }
+  else if(state.tab === "resumen"){ c.innerHTML = viewResumen(); bindResumen(); }
   else c.innerHTML = viewProximamente(state.tab);
 }
 
@@ -572,6 +622,125 @@ function viewProximamente(tabId){
         Por ahora podés cargar tus cuentas y la cotización desde <b>Ajustes</b>.</div>
       </div>
     </div>`;
+}
+
+/* ══════════════════════ RESUMEN ══════════════════════ */
+function viewResumen(){
+  if(!state.conectado){
+    return `<h2 class="tab-title">Resumen</h2>
+      <div class="card"><div class="empty">
+        <div class="big">🔌</div><div class="t">Sin conexión</div>
+        <div class="s">Conectá tu backend en <b>Ajustes</b> para ver tu resumen.</div>
+      </div></div>`;
+  }
+
+  const movsMes = state.movimientos.filter(m => mesDe(m.fecha) === state.mes);
+  const p = patrimonio();                       // saldos de hoy, al dólar de hoy
+  const saldos = saldosPorCuenta();
+  const enPatrimonio = state.cuentas.filter(c => c.enPatrimonio);
+  const fuera = state.cuentas.filter(c => !c.enPatrimonio);
+
+  const filaSaldo = c => {
+    const vista = montoVista(saldos[c.id], c.moneda, rate());
+    return `<div class="item">
+      <span style="width:20px;text-align:center;flex-shrink:0">${tipoInfo(c.tipo).ic}</span>
+      <span class="nm">${esc(c.nombre)}</span>
+      <span class="amt" style="text-align:right"${vista.tit ? ` title="${esc(vista.tit)}"` : ""}>
+        <span class="n num" style="font-weight:600;font-size:14px">${vista.txt}</span>
+        ${vista.sub ? `<span class="sub" style="display:block;font-size:10.5px;color:var(--faint)">${esc(vista.sub)}</span>` : ""}
+      </span>
+    </div>`;
+  };
+
+  return `
+    <h2 class="tab-title">Resumen</h2>
+
+    <div class="hero">
+      <div class="lbl">Patrimonio hoy</div>
+      <div class="v num">${state.cur === "USD" ? fmt(p.usd, "USD", 0) : fmt(p.ars, "ARS", 0)}</div>
+      ${state.cur === "ambas" ? `<div class="u num">${fmt(p.usd, "USD", 0)}</div>` : ""}
+      <div class="u">${enPatrimonio.length} ${enPatrimonio.length === 1 ? "cuenta" : "cuentas"} en patrimonio${p.sinCotizacion ? ` · ${p.sinCotizacion} sin cotización` : ""}</div>
+    </div>
+
+    <div class="mesnav">
+      <button data-mes="-1" title="Mes anterior">‹</button>
+      <span class="m">${mesLabel(state.mes)}</span>
+      <span style="display:flex;gap:6px;align-items:center">
+        ${state.mes !== mesActual() ? `<button class="hoy" data-mes="hoy">Hoy</button>` : ""}
+        <button data-mes="1" title="Mes siguiente">›</button>
+      </span>
+    </div>
+    ${bloqueTotales(movsMes)}
+    ${cardGrafico(movsMes)}
+
+    <div class="card">
+      <div class="card-head"><h3>Saldo por cuenta</h3><span class="tag">hoy</span></div>
+      <div style="margin-top:6px">
+        ${state.cuentas.length ? enPatrimonio.map(filaSaldo).join("") : `<div class="empty"><div class="s">No hay cuentas todavía.</div></div>`}
+      </div>
+      ${fuera.length ? `<p class="hint" style="margin:12px 0 4px">Fuera del patrimonio</p>${fuera.map(filaSaldo).join("")}` : ""}
+    </div>
+
+    <button class="fab" id="fabNuevo" title="Nuevo movimiento">＋</button>`;
+}
+
+/* Gráfico de barras por categoría (sin librerías) */
+function cardGrafico(movsMes){
+  const tipo = state.grafico === "Ingreso" ? "Ingreso" : "Egreso";
+  const map = {};
+  let sinCot = 0;
+  for(const m of movsMes){
+    if(m.tipo !== tipo) continue;
+    const tc  = tcDe(m);
+    const ars = convertir(m.monto, m.moneda, "ARS", tc);
+    const usd = convertir(m.monto, m.moneda, "USD", tc);
+    if(ars == null || usd == null){ sinCot++; continue; }
+    const k = m.categoria || "";
+    if(!map[k]) map[k] = {id:k, ars:0, usd:0};
+    map[k].ars += ars; map[k].usd += usd;
+  }
+  const filas = Object.values(map).sort((a,b) => b.ars - a.ars);
+  const total = filas.reduce((a,x) => a + x.ars, 0);
+
+  const pills = ["Egreso","Ingreso"].map(t =>
+    `<button class="pill ${tipo===t?"on":""}" data-graf="${t}">${t}s</button>`).join("");
+
+  let cuerpo;
+  if(!filas.length){
+    cuerpo = `<div class="empty" style="padding:20px 10px"><div class="s">Sin ${tipo.toLowerCase()}s en ${mesLabel(state.mes)}.</div></div>`;
+  }else{
+    cuerpo = `<div class="bars">` + filas.map(f => {
+      const cat = catPorId(f.id);
+      const pct = total ? Math.round(f.ars / total * 100) : 0;
+      const val = state.cur === "USD" ? fmt(f.usd, "USD", 0) : fmt(f.ars, "ARS", 0);
+      return `<div class="bar">
+        <div class="bl">
+          <span class="dot" style="background:${esc(cat ? cat.color : COLOR_DEFAULT)}"></span>
+          <span class="nm">${esc(cat ? cat.nombre : "Sin categoría")}</span>
+          <span class="pct">${pct}%</span>
+          <span class="val num">${val}</span>
+        </div>
+        <div class="track"><div class="fill" style="width:${pct}%;background:${esc(cat ? cat.color : COLOR_DEFAULT)}"></div></div>
+      </div>`;
+    }).join("") + `</div>`;
+  }
+
+  return `
+  <div class="card">
+    <div class="card-head"><h3>Por categoría</h3><span style="display:flex;gap:6px">${pills}</span></div>
+    ${cuerpo}
+    ${sinCot ? `<p class="hint" style="margin:10px 0 0">${sinCot} ${sinCot === 1 ? "movimiento quedó" : "movimientos quedaron"} fuera por no tener cotización.</p>` : ""}
+  </div>`;
+}
+
+function bindResumen(){
+  $$("[data-mes]").forEach(b => b.onclick = () => {
+    state.mes = b.dataset.mes === "hoy" ? mesActual() : mesShift(state.mes, +b.dataset.mes);
+    render();
+  });
+  $$("[data-graf]").forEach(b => b.onclick = () => { state.grafico = b.dataset.graf; render(); });
+  const fab = $("#fabNuevo");
+  if(fab) fab.onclick = () => modalMovimiento(null);
 }
 
 /* ══════════════════════ MOVIMIENTOS ══════════════════════ */

@@ -1,5 +1,24 @@
 # Changelog
 
+## Fase 4 — Resumen (2026-08-26) ✅
+
+Dashboard con patrimonio, totales del mes, gráfico por categoría y saldo por cuenta. Sin tocar el backend.
+
+**Motor de saldos** (adelantado de la Fase 5, porque la Fase 4 necesita el saldo por cuenta)
+- `saldosPorCuenta(hasta)` recorre los movimientos una sola vez y devuelve el saldo de cada cuenta: `SaldoInicial` + ingresos − egresos, y en los internos resta en el origen y suma `MontoDestino` en el destino. Acepta una fecha de corte.
+- `patrimonio(hasta)` suma las cuentas marcadas `EnPatrimonio`, valuadas **al dólar de hoy**, y cuenta las que no se pudieron convertir.
+- El saldo vive en la moneda de la cuenta: no se convierte para calcularlo, sólo para mostrarlo.
+
+**Pantalla Resumen**
+- Hero con el **patrimonio de hoy** y cuántas cuentas lo componen (en "Ambas" muestra las dos monedas).
+- Navegación por mes **compartida con Movimientos**: cambiar el mes en una pantalla lo cambia en la otra.
+- Totales del mes (ingresos / egresos / neto) reusando el bloque de la Fase 3.
+- **Gráfico por categoría** con barras horizontales, en HTML/CSS (sin librerías), con el color de cada categoría, su porcentaje y el monto. Un par de pills alterna entre egresos e ingresos.
+- **Saldo por cuenta** a hoy, con las cuentas fuera del patrimonio (tarjetas) listadas aparte.
+- FAB ＋ para cargar un movimiento sin ir a la otra pantalla.
+
+**Verificado** con un set de 6 movimientos en dos monedas y dos meses: saldos por cuenta ($1.152.480 y u$s 150 partiendo de $50.000 y u$s 300), patrimonio a hoy en ARS y USD, totales del mes usando la cotización congelada de cada movimiento (un gasto de u$s 50 a 1500 pesa $75.000, no $80.000), interno y mes anterior excluidos de los totales, gráfico con los porcentajes correctos (88% / 12%), sincronía de mes entre pantallas, y las tres monedas del toggle. Sin errores de consola; en 375px no hay scroll horizontal.
+
 ## Fase 3 — Multimoneda (2026-08-26) ✅
 
 El toggle ARS / USD / Ambas del header ahora afecta los datos, con la regla de oro del `PLAN.md`.
