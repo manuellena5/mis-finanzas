@@ -11,7 +11,7 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | Fase | Qué incluye | Estado |
 |---|---|---|
 | 1 | PWA + backend + `bootstrap` + cotización (online y manual) + ABM Cuentas | ✅ Completa |
-| 2 | Categorías, modos de pago y alta/edición de movimientos | ⏳ Pendiente |
+| 2 | Categorías, modos de pago y alta/edición de movimientos | ✅ Completa |
 | 3 | Multimoneda (cotización congelada por movimiento, toggle real) | ⏳ Pendiente |
 | 4 | Resumen | ⏳ Pendiente |
 | 5 | Patrimonio (saldos calculados por movimientos) | ⏳ Pendiente |

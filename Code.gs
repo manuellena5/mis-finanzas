@@ -32,9 +32,21 @@
 
 const CUENTAS_SHEET = "Cuentas";
 const CONFIG_SHEET  = "Config";
+const MOV_SHEET     = "Movimientos";
+const CAT_SHEET     = "Categorias";
+const MODOS_SHEET   = "ModosPago";
 
 const CUENTAS_COLS = ["ID","Nombre","Tipo","Moneda","SaldoInicial","FechaInicial","EnPatrimonio","Orden","Activo"];
 const CONFIG_COLS  = ["clave","valor"];
+const CAT_COLS     = ["ID","Nombre","Aplica","Color","Orden","Activo"];
+const MODOS_COLS   = ["ID","Nombre","Orden","Activo"];
+
+/* Movimientos: Cuenta, CuentaDestino y Categoria guardan el ID de su ficha
+   (así renombrarlas no rompe el historial). ModoPago guarda el nombre.       */
+const MOV_COLS = [
+  "ID","Mes","Fecha","Tipo","Categoria","Concepto","Cuenta","CuentaDestino",
+  "Moneda","Monto","MonedaDestino","MontoDestino","Cotizacion","ModoPago","Observacion","Timestamp"
+];
 
 /* ───────── Token ─────────
    Vive en las Propiedades del script, no en el código. Para verlo o cambiarlo:
@@ -83,7 +95,7 @@ function doGet(e) {
   return jsonResponse({
     ok: true,
     msg: "Mis Finanzas API activa",
-    version: "fase1",
+    version: "fase2",
     auth: "token",
     tokenConfigurado: !!getToken()
   });
@@ -108,6 +120,23 @@ function handleAction(data) {
     case "saveCuenta":   return saveCuenta(data.cuenta);
     case "deleteCuenta": return deleteCuenta(data.id);
 
+    /* Categorías */
+    case "listCategorias":  return { ok:true, categorias: listCategorias() };
+    case "saveCategoria":   return saveCategoria(data.categoria);
+    case "saveCategorias":  return saveCategorias(data.categorias || []);
+    case "deleteCategoria": return deleteCategoria(data.id);
+
+    /* Modos de pago */
+    case "listModosPago":  return { ok:true, modosPago: listModosPago() };
+    case "saveModoPago":   return saveModoPago(data.modoPago);
+    case "saveModosPago":  return saveModosPago(data.modosPago || []);
+    case "deleteModoPago": return deleteModoPago(data.id);
+
+    /* Movimientos */
+    case "listMovimientos":  return { ok:true, movimientos: listMovimientos(data.mes) };
+    case "saveMovimiento":   return saveMovimiento(data.mov);
+    case "deleteMovimiento": return deleteMovimiento(data.id);
+
     /* Config */
     case "getConfig":    return { ok:true, config: getConfig() };
     case "setConfig":    return setConfig(data.clave, data.valor);
@@ -120,8 +149,11 @@ function handleAction(data) {
 function handleBootstrap() {
   return {
     ok: true,
-    cuentas: listCuentas(),   // devuelve todas, con el flag `activo`; el front filtra
-    config:  getConfig()
+    cuentas:     listCuentas(),   // devuelve todas, con el flag `activo`; el front filtra
+    categorias:  listCategorias(),
+    modosPago:   listModosPago(),
+    movimientos: listMovimientos(),
+    config:      getConfig()
   };
 }
 
@@ -166,28 +198,168 @@ function listCuentas() {
 
 function saveCuenta(c) {
   if (!c || !String(c.nombre || "").trim()) return { ok:false, error:"La cuenta necesita un nombre" };
-  const sh  = getOrCreateSheet(CUENTAS_SHEET, CUENTAS_COLS);
-  const all = sh.getDataRange().getValues();
   if (!c.id) c.id = uid();
-  const row = cuentaToRow(c);
-  for (let i = 1; i < all.length; i++) {
-    if (String(all[i][0]) === String(c.id)) {
-      sh.getRange(i+1, 1, 1, CUENTAS_COLS.length).setValues([row]);
-      return { ok:true, id:c.id };
-    }
-  }
-  sh.appendRow(row);
+  upsert(CUENTAS_SHEET, CUENTAS_COLS, cuentaToRow(c));
   return { ok:true, id:c.id };
 }
 
 function deleteCuenta(id) {
-  const sh  = getOrCreateSheet(CUENTAS_SHEET, CUENTAS_COLS);
-  const all = sh.getDataRange().getValues();
-  for (let i = all.length - 1; i >= 1; i--) {
-    if (String(all[i][0]) === String(id)) { sh.deleteRow(i+1); return { ok:true }; }
-  }
-  return { ok:true };
+  // Con movimientos asociados no se borra: quedarían huérfanos.
+  const usada = listMovimientos().some(m => m.cuenta === String(id) || m.cuentaDestino === String(id));
+  if (usada) return { ok:false, error:"La cuenta tiene movimientos. Borralos o pasalos a otra cuenta primero." };
+  return borrarPorId(CUENTAS_SHEET, CUENTAS_COLS, id);
 }
+
+/* ───────── Categorías ───────── */
+function catToRow(c) {
+  return [
+    String(c.id || uid()),
+    String(c.nombre || ""),
+    String(c.aplica || "ambos"),          // gasto | ingreso | ambos
+    String(c.color || "#64748b"),
+    Number(c.orden || 0),
+    c.activo === false ? false : true
+  ];
+}
+function rowToCat(r) {
+  return {
+    id:     String(r[0]),
+    nombre: String(r[1] || ""),
+    aplica: String(r[2] || "ambos"),
+    color:  String(r[3] || "#64748b"),
+    orden:  Number(r[4] || 0),
+    activo: toBool(r[5], true)
+  };
+}
+function listCategorias() {
+  const sh  = getOrCreateSheet(CAT_SHEET, CAT_COLS);
+  const all = sh.getDataRange().getValues();
+  if (all.length <= 1) return [];
+  return all.slice(1).filter(r => r[0]).map(rowToCat)
+    .sort((a,b) => (a.orden - b.orden) || a.nombre.localeCompare(b.nombre, "es"));
+}
+function saveCategoria(c) {
+  if (!c || !String(c.nombre || "").trim()) return { ok:false, error:"La categoría necesita un nombre" };
+  if (!c.id) c.id = uid();
+  upsert(CAT_SHEET, CAT_COLS, catToRow(c), c.id);
+  return { ok:true, id:c.id };
+}
+function saveCategorias(lista) {
+  const rows = lista.filter(c => String(c.nombre || "").trim()).map(catToRow);
+  if (rows.length) upsertBatch(CAT_SHEET, CAT_COLS, rows);
+  return { ok:true, categorias: listCategorias() };
+}
+function deleteCategoria(id) {
+  const usada = listMovimientos().some(m => m.categoria === String(id));
+  if (usada) return { ok:false, error:"La categoría está usada en movimientos. Recategorizalos antes de borrarla." };
+  return borrarPorId(CAT_SHEET, CAT_COLS, id);
+}
+
+/* ───────── Modos de pago ───────── */
+function modoToRow(m) {
+  return [
+    String(m.id || uid()),
+    String(m.nombre || ""),
+    Number(m.orden || 0),
+    m.activo === false ? false : true
+  ];
+}
+function rowToModo(r) {
+  return { id:String(r[0]), nombre:String(r[1] || ""), orden:Number(r[2] || 0), activo:toBool(r[3], true) };
+}
+function listModosPago() {
+  const sh  = getOrCreateSheet(MODOS_SHEET, MODOS_COLS);
+  const all = sh.getDataRange().getValues();
+  if (all.length <= 1) return [];
+  return all.slice(1).filter(r => r[0]).map(rowToModo)
+    .sort((a,b) => (a.orden - b.orden) || a.nombre.localeCompare(b.nombre, "es"));
+}
+function saveModoPago(m) {
+  if (!m || !String(m.nombre || "").trim()) return { ok:false, error:"El modo de pago necesita un nombre" };
+  if (!m.id) m.id = uid();
+  upsert(MODOS_SHEET, MODOS_COLS, modoToRow(m), m.id);
+  return { ok:true, id:m.id };
+}
+function saveModosPago(lista) {
+  const rows = lista.filter(m => String(m.nombre || "").trim()).map(modoToRow);
+  if (rows.length) upsertBatch(MODOS_SHEET, MODOS_COLS, rows);
+  return { ok:true, modosPago: listModosPago() };
+}
+function deleteModoPago(id) { return borrarPorId(MODOS_SHEET, MODOS_COLS, id); }
+
+/* ───────── Movimientos ───────── */
+function movToRow(m) {
+  const fecha = formatFecha(m.fecha);
+  return [
+    String(m.id || uid()),
+    String(m.mes || fecha.slice(0,7)),
+    fecha,
+    String(m.tipo || ""),
+    String(m.categoria || ""),
+    String(m.concepto || ""),
+    String(m.cuenta || ""),
+    String(m.cuentaDestino || ""),
+    String(m.moneda || "ARS"),
+    Number(m.monto || 0),
+    String(m.monedaDestino || ""),
+    numOrBlank(m.montoDestino),
+    numOrBlank(m.cotizacion),
+    String(m.modoPago || ""),
+    String(m.observacion || ""),
+    String(m.timestamp || new Date().toISOString())
+  ];
+}
+function rowToMov(r) {
+  return {
+    id:            String(r[0]),
+    mes:           String(r[1] || ""),
+    fecha:         formatFecha(r[2]),
+    tipo:          String(r[3] || ""),
+    categoria:     String(r[4] || ""),
+    concepto:      String(r[5] || ""),
+    cuenta:        String(r[6] || ""),
+    cuentaDestino: String(r[7] || ""),
+    moneda:        String(r[8] || "ARS"),
+    monto:         Number(r[9] || 0),
+    monedaDestino: String(r[10] || ""),
+    montoDestino:  r[11] === "" || r[11] == null ? null : Number(r[11]),
+    cotizacion:    r[12] === "" || r[12] == null ? null : Number(r[12]),
+    modoPago:      String(r[13] || ""),
+    observacion:   String(r[14] || ""),
+    timestamp:     String(r[15] || "")
+  };
+}
+/** @param {string=} mes "YYYY-MM"; sin mes devuelve todos. */
+function listMovimientos(mes) {
+  const sh  = getOrCreateSheet(MOV_SHEET, MOV_COLS);
+  const all = sh.getDataRange().getValues();
+  if (all.length <= 1) return [];
+  let out = all.slice(1).filter(r => r[0]).map(rowToMov);
+  if (mes) out = out.filter(m => m.mes === String(mes));
+  // más nuevos primero
+  return out.sort((a,b) => (b.fecha + b.timestamp).localeCompare(a.fecha + a.timestamp));
+}
+function saveMovimiento(m) {
+  const err = validarMovimiento(m);
+  if (err) return { ok:false, error:err };
+  if (!m.id) m.id = uid();
+  upsert(MOV_SHEET, MOV_COLS, movToRow(m), m.id);
+  return { ok:true, id:m.id };
+}
+function validarMovimiento(m) {
+  if (!m) return "Movimiento vacío";
+  if (["Ingreso","Egreso","Interno"].indexOf(String(m.tipo)) < 0) return "Tipo inválido: " + m.tipo;
+  if (!formatFecha(m.fecha)) return "El movimiento necesita una fecha";
+  if (!(Number(m.monto) > 0)) return "El monto tiene que ser mayor a cero";
+  if (!String(m.cuenta || "").trim()) return "El movimiento necesita una cuenta";
+  if (m.tipo === "Interno") {
+    if (!String(m.cuentaDestino || "").trim()) return "Un movimiento interno necesita cuenta destino";
+    if (String(m.cuentaDestino) === String(m.cuenta)) return "La cuenta destino tiene que ser distinta de la de origen";
+    if (!(Number(m.montoDestino) > 0)) return "El monto que entra tiene que ser mayor a cero";
+  }
+  return "";
+}
+function deleteMovimiento(id) { return borrarPorId(MOV_SHEET, MOV_COLS, id); }
 
 /* ───────── Config (clave/valor) ───────── */
 function getConfig() {
@@ -215,6 +387,37 @@ function setConfig(clave, valor) {
 }
 
 /* ───────── Helpers ───────── */
+/** Inserta o actualiza filas por su ID (columna 1), con una sola lectura. */
+function upsertBatch(name, cols, rows) {
+  const sh  = getOrCreateSheet(name, cols);
+  const all = sh.getDataRange().getValues();
+  const rowOf = {};
+  for (let i = 1; i < all.length; i++) if (all[i][0]) rowOf[String(all[i][0])] = i + 1;
+  const nuevas = [];
+  for (const row of rows) {
+    const r = rowOf[String(row[0])];
+    if (r) sh.getRange(r, 1, 1, cols.length).setValues([row]);
+    else nuevas.push(row);
+  }
+  if (nuevas.length) sh.getRange(sh.getLastRow() + 1, 1, nuevas.length, cols.length).setValues(nuevas);
+}
+function upsert(name, cols, row) { upsertBatch(name, cols, [row]); }
+
+/** Borrado físico de la fila cuyo ID (columna 1) coincide. */
+function borrarPorId(name, cols, id) {
+  const sh  = getOrCreateSheet(name, cols);
+  const all = sh.getDataRange().getValues();
+  for (let i = all.length - 1; i >= 1; i--) {
+    if (String(all[i][0]) === String(id)) { sh.deleteRow(i + 1); return { ok:true }; }
+  }
+  return { ok:true };
+}
+
+/** Number(v) o "" si viene vacío (para no escribir ceros donde no aplica). */
+function numOrBlank(v) {
+  return (v === "" || v == null) ? "" : Number(v);
+}
+
 function getOrCreateSheet(name, cols) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(name);

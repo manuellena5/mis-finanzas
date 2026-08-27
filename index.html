@@ -117,6 +117,56 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .mepbox .v{font-size:24px;font-weight:700}
 .mepbox .src{font-size:12px;color:var(--faint)}
 
+/* Movimientos */
+.mesnav{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px}
+.mesnav .m{font-weight:600;font-size:14px;text-transform:capitalize}
+.mesnav button{border:none;background:#f1f5f9;color:var(--ink);width:32px;height:32px;border-radius:9px;cursor:pointer;font-size:15px;line-height:1}
+.mesnav button.hoy{width:auto;padding:0 11px;height:30px;font-size:12px;font-weight:600;color:var(--muted)}
+.mesnav button:disabled{opacity:.4;cursor:default}
+
+.filtros{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
+.pill{padding:6px 12px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:12px;font-weight:500;cursor:pointer}
+.pill.on{border-color:var(--green);background:var(--green-bg);color:var(--green);font-weight:600}
+.filtros select,.filtros input{padding:7px 10px;border:1px solid var(--line);border-radius:9px;font-size:12.5px;background:var(--card);color:var(--ink)}
+.filtros input{flex:1;min-width:150px}
+
+.diahdr{font-size:11px;color:var(--faint);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin:16px 2px 7px}
+.mov{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:11px 13px;margin-bottom:8px;display:flex;gap:11px;align-items:center;cursor:pointer;width:100%;text-align:left;font-family:inherit;color:inherit}
+.mov:hover{border-color:#cbd5e1}
+.dot{width:9px;height:9px;border-radius:3px;flex-shrink:0}
+.mov .info{flex:1;min-width:0}
+.mov .cpt{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mov .meta{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:4px}
+.mov .amt{text-align:right;white-space:nowrap;flex-shrink:0}
+.mov .amt .n{font-weight:700;font-size:15px}
+.mov .amt .n.pos{color:var(--green-med)}
+.mov .amt .n.neg{color:var(--danger)}
+.mov .amt .n.int{color:var(--muted)}
+.mov .amt .sub{font-size:10.5px;color:var(--faint);margin-top:3px}
+
+.fab{position:fixed;right:18px;bottom:calc(76px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;background:var(--green);color:#fff;border:none;font-size:25px;cursor:pointer;box-shadow:0 6px 18px rgba(15,81,50,.35);z-index:45;line-height:1}
+@media(min-width:860px){.fab{bottom:26px;right:26px}}
+
+/* Selector de tipo de movimiento */
+.seg{display:flex;gap:6px;margin:4px 0 2px}
+.seg button{flex:1;padding:10px 6px;border:1px solid var(--line);background:var(--card);border-radius:10px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer}
+.seg button.on{border-color:var(--green);background:var(--green-bg);color:var(--green)}
+.inputmon{position:relative}
+.inputmon .sim{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--faint);font-weight:600;pointer-events:none}
+.inputmon input{padding-left:42px}
+.tcinfo{font-size:12px;color:var(--muted);background:#f1f5f9;border-radius:9px;padding:8px 11px;margin-top:8px;line-height:1.5}
+
+/* Items de lista en Ajustes (categorías, modos de pago) */
+.item{display:flex;align-items:center;gap:10px;padding:10px 2px;border-bottom:1px solid #f1f5f9}
+.item:last-child{border-bottom:none}
+.item .nm{flex:1;font-size:14px;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .acts{display:flex;gap:2px;flex-shrink:0}
+.item .acts button{border:none;background:none;cursor:pointer;font-size:14px;padding:6px;border-radius:7px;color:var(--muted);line-height:1}
+.item .acts button:hover{background:#f1f5f9}
+.swatch{width:14px;height:14px;border-radius:4px;flex-shrink:0}
+.addrow{display:flex;gap:8px;margin-top:12px}
+.addrow input{flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13.5px;background:#fff;color:var(--ink)}
+
 /* Modal */
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:flex;align-items:flex-end;justify-content:center}
 @media(min-width:640px){.overlay{align-items:center;padding:20px}}
@@ -177,6 +227,27 @@ const TIPOS_CUENTA = [
 ];
 const tipoInfo = t => TIPOS_CUENTA.find(x => x.v === t) || TIPOS_CUENTA[5];
 
+const TIPOS_MOV = ["Ingreso","Egreso","Interno"];
+const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+const APLICA = [{v:"gasto",l:"Egresos"},{v:"ingreso",l:"Ingresos"},{v:"ambos",l:"Ambos"}];
+const COLOR_DEFAULT = "#64748b";
+
+/* Sets iniciales opcionales (botón "Cargar sugeridas") */
+const CATEGORIAS_SUGERIDAS = [
+  {nombre:"Supermercado",     aplica:"gasto",   color:"#C53030", orden:1},
+  {nombre:"Comida y salidas", aplica:"gasto",   color:"#B44D1A", orden:2},
+  {nombre:"Transporte",       aplica:"gasto",   color:"#2563eb", orden:3},
+  {nombre:"Servicios",        aplica:"gasto",   color:"#7c3aed", orden:4},
+  {nombre:"Alquiler",         aplica:"gasto",   color:"#0f766e", orden:5},
+  {nombre:"Salud",            aplica:"gasto",   color:"#db2777", orden:6},
+  {nombre:"Ocio",             aplica:"gasto",   color:"#EF9F27", orden:7},
+  {nombre:"Compras",          aplica:"gasto",   color:"#0891b2", orden:8},
+  {nombre:"Sueldo",           aplica:"ingreso", color:"#198754", orden:20},
+  {nombre:"Freelance",        aplica:"ingreso", color:"#0F5132", orden:21},
+  {nombre:"Otros",            aplica:"ambos",   color:"#94a3b8", orden:30}
+];
+const MODOS_SUGERIDOS = ["Efectivo","Débito","Crédito","Transferencia"];
+
 /* ══════════════════════ ESTADO ══════════════════════ */
 const state = {
   url:      localStorage.getItem("mf_url") || "",
@@ -185,6 +256,11 @@ const state = {
   mep:      JSON.parse(localStorage.getItem("mf_mep") || "null"), // {compra,venta,fecha,fuente,manual}
   tab:      localStorage.getItem("mf_tab") || "resumen",
   cuentas:  [],
+  categorias: [],
+  modosPago:  [],
+  movimientos: [],
+  mes:      "",                                               // "YYYY-MM" que se está mirando
+  filtros:  {tipo:"todos", cuenta:"", categoria:"", texto:""},
   config:   {},
   conectado: false,
   cargando:  false,
@@ -280,6 +356,28 @@ async function fetchMep(silent){
   return false;
 }
 
+/* MEP de una fecha pasada (para congelar el valor del movimiento en su día).
+   Si no hay dato (fin de semana, feriado, API caída) devuelve null y se usa el actual. */
+const mepHistCache = {};
+async function mepDe(fechaIso){
+  const iso = isoDate(fechaIso);
+  if(!iso) return null;
+  if(iso >= todayIso()) return rate();
+  if(iso in mepHistCache) return mepHistCache[iso];
+  const [y,m,d] = iso.split("-");
+  try{
+    const r = await fetch(`https://api.argentinadatos.com/v1/cotizaciones/dolares/mep/${y}/${m}/${d}`, {cache:"force-cache"});
+    if(r.ok){
+      const j = await r.json();
+      const dato = Array.isArray(j) ? j[j.length - 1] : j;
+      const venta = dato && +dato.venta;
+      if(venta > 0){ mepHistCache[iso] = venta; return venta; }
+    }
+  }catch(e){ /* sin dato histórico: se usa el actual */ }
+  mepHistCache[iso] = null;
+  return null;
+}
+
 function setMepManual(valor){
   const v = parseFloat(String(valor).replace(",", "."));
   if(!v || v <= 0){ toast("Valor inválido"); return false; }
@@ -327,14 +425,45 @@ async function api(payload){
 function ordenarCuentas(list){
   return list.slice().sort((a,b) => ((+a.orden||0) - (+b.orden||0)) || String(a.nombre).localeCompare(String(b.nombre), "es"));
 }
+/* Más nuevos primero; a igual fecha, el último cargado arriba. */
+function ordenarMovs(list){
+  return list.slice().sort((a,b) => (b.fecha + (b.timestamp||"")).localeCompare(a.fecha + (a.timestamp||"")));
+}
+
+/* ── Mes ── */
+const mesActual  = () => todayIso().slice(0,7);
+const mesDe      = iso => String(iso || "").slice(0,7);
+function mesLabel(mes){
+  const [y,m] = String(mes).split("-");
+  return (MESES[+m - 1] || "") + " " + y;
+}
+function mesShift(mes, delta){
+  const [y,m] = String(mes).split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
+}
+
+/* ── Lookups ── */
+const cuentaPorId = id => state.cuentas.find(c => c.id === id) || null;
+const catPorId    = id => state.categorias.find(c => c.id === id) || null;
+const nombreCuenta = id => (cuentaPorId(id) || {}).nombre || "cuenta borrada";
+const monedaCuenta = id => (cuentaPorId(id) || {}).moneda || "ARS";
+/* Categorías que aplican a un tipo de movimiento */
+function catsPara(tipo){
+  const quiere = tipo === "Ingreso" ? "ingreso" : "gasto";
+  return state.categorias.filter(c => c.aplica === quiere || c.aplica === "ambos");
+}
 
 async function bootstrap(silent){
   if(!state.url || !state.token){ state.conectado = false; render(); return false; }
   state.cargando = true; state.error = ""; render();
   try{
     const d = await api({action:"bootstrap"});
-    state.cuentas  = ordenarCuentas((d.cuentas || []).filter(c => c.activo !== false));
-    state.config   = d.config || {};
+    state.cuentas     = ordenarCuentas((d.cuentas || []).filter(c => c.activo !== false));
+    state.categorias  = (d.categorias || []).filter(c => c.activo !== false);
+    state.modosPago   = (d.modosPago || []).filter(m => m.activo !== false);
+    state.movimientos = ordenarMovs((d.movimientos || []).map(m => ({...m, fecha:isoDate(m.fecha)})));
+    state.config      = d.config || {};
     state.conectado = true;
     if(!silent) toast("Conectado · " + state.cuentas.length + (state.cuentas.length === 1 ? " cuenta" : " cuentas"));
     return true;
@@ -384,10 +513,11 @@ function render(){
   renderNav();
   renderCurToggle();
   renderBrandSub();
+  if(!state.mes) state.mes = mesActual();
   const c = $("#content");
-  if(state.tab === "ajustes") c.innerHTML = viewAjustes();
+  if(state.tab === "ajustes"){ c.innerHTML = viewAjustes(); bindAjustes(); }
+  else if(state.tab === "movimientos"){ c.innerHTML = viewMovimientos(); bindMovimientos(); }
   else c.innerHTML = viewProximamente(state.tab);
-  if(state.tab === "ajustes") bindAjustes();
 }
 
 function viewProximamente(tabId){
@@ -404,13 +534,383 @@ function viewProximamente(tabId){
     </div>`;
 }
 
+/* ══════════════════════ MOVIMIENTOS ══════════════════════ */
+function movsVisibles(){
+  const f = state.filtros;
+  const txt = f.texto.trim().toLowerCase();
+  return state.movimientos.filter(m => {
+    if(mesDe(m.fecha) !== state.mes) return false;
+    if(f.tipo !== "todos" && m.tipo !== f.tipo) return false;
+    if(f.cuenta && m.cuenta !== f.cuenta && m.cuentaDestino !== f.cuenta) return false;
+    if(f.categoria && m.categoria !== f.categoria) return false;
+    if(txt && !((m.concepto || "") + " " + (m.observacion || "")).toLowerCase().includes(txt)) return false;
+    return true;
+  });
+}
+
+function viewMovimientos(){
+  if(!state.conectado){
+    return `<h2 class="tab-title">Movimientos</h2>
+      <div class="card"><div class="empty">
+        <div class="big">🔌</div><div class="t">Sin conexión</div>
+        <div class="s">Conectá tu backend en <b>Ajustes</b> para cargar y ver movimientos.</div>
+      </div></div>`;
+  }
+  if(!state.cuentas.length){
+    return `<h2 class="tab-title">Movimientos</h2>
+      <div class="card"><div class="empty">
+        <div class="big">🏦</div><div class="t">Primero creá una cuenta</div>
+        <div class="s">Los movimientos entran o salen de una cuenta. Creá al menos una en <b>Ajustes → Cuentas</b>.</div>
+      </div></div>`;
+  }
+
+  const f = state.filtros;
+  const movs = movsVisibles();
+  const total = state.movimientos.filter(m => mesDe(m.fecha) === state.mes).length;
+
+  const pills = ["todos"].concat(TIPOS_MOV).map(t =>
+    `<button class="pill ${f.tipo===t?"on":""}" data-ftipo="${t}">${t==="todos"?"Todos":t+"s"}</button>`).join("");
+
+  const optCuentas = `<option value="">Todas las cuentas</option>` + state.cuentas.map(c =>
+    `<option value="${esc(c.id)}" ${f.cuenta===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("");
+  const optCats = `<option value="">Todas las categorías</option>` + state.categorias.map(c =>
+    `<option value="${esc(c.id)}" ${f.categoria===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("");
+
+  let lista;
+  if(!movs.length){
+    lista = `<div class="card"><div class="empty">
+      <div class="big">💸</div>
+      <div class="t">${total ? "Ningún movimiento con estos filtros" : "Sin movimientos en " + mesLabel(state.mes)}</div>
+      <div class="s">${total ? "Probá aflojar los filtros." : "Tocá el <b>＋</b> para cargar el primero."}</div>
+    </div></div>`;
+  }else{
+    let dia = "";
+    lista = movs.map(m => {
+      const hdr = m.fecha !== dia ? (dia = m.fecha, `<div class="diahdr">${dispDate(m.fecha)}</div>`) : "";
+      return hdr + filaMov(m);
+    }).join("");
+  }
+
+  return `
+    <h2 class="tab-title">Movimientos</h2>
+    <div class="mesnav">
+      <button data-mes="-1" title="Mes anterior">‹</button>
+      <span class="m">${mesLabel(state.mes)}</span>
+      <span style="display:flex;gap:6px;align-items:center">
+        ${state.mes !== mesActual() ? `<button class="hoy" data-mes="hoy">Hoy</button>` : ""}
+        <button data-mes="1" title="Mes siguiente">›</button>
+      </span>
+    </div>
+    <div class="filtros">${pills}</div>
+    <div class="filtros">
+      <input id="fTexto" type="search" placeholder="Buscar concepto…" value="${esc(f.texto)}">
+      <select id="fCuenta">${optCuentas}</select>
+      <select id="fCategoria">${optCats}</select>
+    </div>
+    ${lista}
+    <button class="fab" id="fabNuevo" title="Nuevo movimiento">＋</button>`;
+}
+
+function filaMov(m){
+  const cat  = catPorId(m.categoria);
+  const color = m.tipo === "Interno" ? "#94a3b8" : (cat ? cat.color : COLOR_DEFAULT);
+  const tags = [];
+  if(m.tipo !== "Interno") tags.push(`<span class="tag">${esc(cat ? cat.nombre : "Sin categoría")}</span>`);
+  tags.push(`<span class="tag">${esc(m.tipo === "Interno" ? nombreCuenta(m.cuenta) + " → " + nombreCuenta(m.cuentaDestino) : nombreCuenta(m.cuenta))}</span>`);
+  if(m.modoPago) tags.push(`<span class="tag">${esc(m.modoPago)}</span>`);
+
+  let clase = "int", signo = "", sub = "";
+  if(m.tipo === "Ingreso"){ clase = "pos"; signo = "+"; }
+  if(m.tipo === "Egreso"){  clase = "neg"; signo = "−"; }
+  if(m.tipo === "Interno"){
+    const cambio = m.monedaDestino && m.monedaDestino !== m.moneda;
+    sub = fmt(m.montoDestino || m.monto, m.monedaDestino || m.moneda) + (cambio ? " · TC " + nf(tcImplicito(m), 0) : "");
+  }
+
+  return `
+  <button class="mov" data-mov="${esc(m.id)}">
+    <span class="dot" style="background:${esc(color)}"></span>
+    <span class="info">
+      <span class="cpt">${esc(m.concepto || "(sin concepto)")}</span>
+      <span class="meta">${tags.join("")}</span>
+    </span>
+    <span class="amt">
+      <span class="n ${clase}">${signo}${fmt(m.monto, m.moneda)}</span>
+      ${sub ? `<span class="sub">${esc(sub)}</span>` : ""}
+    </span>
+  </button>`;
+}
+
+/** ARS por 1 USD implícito en un interno con cambio de moneda. */
+function tcImplicito(m){
+  const a = +m.monto || 0, b = +m.montoDestino || 0;
+  if(!a || !b) return 0;
+  if(m.moneda === "USD" && m.monedaDestino === "ARS") return b / a;   // venta de dólares
+  if(m.moneda === "ARS" && m.monedaDestino === "USD") return a / b;   // compra de dólares
+  return 0;
+}
+
+function bindMovimientos(){
+  $$("[data-mes]").forEach(b => b.onclick = () => {
+    state.mes = b.dataset.mes === "hoy" ? mesActual() : mesShift(state.mes, +b.dataset.mes);
+    render();
+  });
+  $$("[data-ftipo]").forEach(b => b.onclick = () => { state.filtros.tipo = b.dataset.ftipo; render(); });
+
+  const txt = $("#fTexto");
+  if(txt) txt.oninput = () => {
+    state.filtros.texto = txt.value;
+    const pos = txt.selectionStart;
+    render();
+    const nuevo = $("#fTexto");
+    if(nuevo){ nuevo.focus(); nuevo.setSelectionRange(pos, pos); }
+  };
+  const fc = $("#fCuenta");
+  if(fc) fc.onchange = () => { state.filtros.cuenta = fc.value; render(); };
+  const fk = $("#fCategoria");
+  if(fk) fk.onchange = () => { state.filtros.categoria = fk.value; render(); };
+
+  $$("[data-mov]").forEach(b => b.onclick = () => modalMovimiento(b.dataset.mov));
+  const fab = $("#fabNuevo");
+  if(fab) fab.onclick = () => modalMovimiento(null);
+}
+
+/* ── Alta / edición de movimiento ── */
+function modalMovimiento(id){
+  const m = id ? state.movimientos.find(x => x.id === id) : null;
+  if(!state.cuentas.length){ toast("Primero creá una cuenta en Ajustes"); return; }
+
+  // Estado local del formulario
+  let tipo = m ? m.tipo : "Egreso";
+
+  const optCuentas = (sel) => state.cuentas.map(c =>
+    `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)} · ${esc(c.moneda)}</option>`).join("");
+  const optModos = `<option value="">—</option>` + state.modosPago.map(x =>
+    `<option value="${esc(x.nombre)}" ${m && m.modoPago === x.nombre ? "selected" : ""}>${esc(x.nombre)}</option>`).join("");
+
+  $("#modalRoot").innerHTML = `
+  <div class="overlay" id="ovMov">
+    <div class="modal">
+      <button class="close" id="mClose">×</button>
+      <h3>${m ? "Editar movimiento" : "Nuevo movimiento"}</h3>
+
+      <div class="seg" id="segTipo">
+        ${TIPOS_MOV.map(t => `<button data-tipo="${t}" class="${t===tipo?"on":""}">${t}</button>`).join("")}
+      </div>
+
+      <div class="row2">
+        <div>
+          <label class="f" for="mFecha">Fecha</label>
+          <input class="f" id="mFecha" type="date" value="${m ? esc(isoDate(m.fecha)) : todayIso()}">
+        </div>
+        <div>
+          <label class="f" for="mMonto"><span id="lblMonto">Monto</span></label>
+          <div class="inputmon">
+            <span class="sim" id="simMonto">$</span>
+            <input class="f num" id="mMonto" type="number" step="0.01" min="0" inputmode="decimal" value="${m ? esc(m.monto) : ""}" placeholder="0">
+          </div>
+        </div>
+      </div>
+
+      <label class="f" for="mCuenta"><span id="lblCuenta">Cuenta</span></label>
+      <select class="f" id="mCuenta">${optCuentas(m ? m.cuenta : state.cuentas[0].id)}</select>
+
+      <div id="bloqueDestino" class="hidden">
+        <label class="f" for="mCuentaDestino">Entra en</label>
+        <select class="f" id="mCuentaDestino">${optCuentas(m ? m.cuentaDestino : "")}</select>
+        <div id="bloqueMontoDestino" class="hidden">
+          <label class="f" for="mMontoDestino">Monto que entra</label>
+          <div class="inputmon">
+            <span class="sim" id="simMontoDestino">$</span>
+            <input class="f num" id="mMontoDestino" type="number" step="0.01" min="0" inputmode="decimal" value="${m && m.montoDestino ? esc(m.montoDestino) : ""}" placeholder="0">
+          </div>
+        </div>
+        <div class="tcinfo hidden" id="tcInfo"></div>
+      </div>
+
+      <div id="bloqueCategoria">
+        <label class="f" for="mCategoria">Categoría</label>
+        <select class="f" id="mCategoria"></select>
+      </div>
+
+      <label class="f" for="mConcepto">Concepto</label>
+      <input class="f" id="mConcepto" placeholder="Coto, sueldo, transferencia…" autocomplete="off" value="${m ? esc(m.concepto) : ""}">
+
+      <div class="row2">
+        <div>
+          <label class="f" for="mModoPago">Modo de pago</label>
+          <select class="f" id="mModoPago">${optModos}</select>
+        </div>
+        <div>
+          <label class="f" for="mCotizacion">Cotización (ARS por USD)</label>
+          <input class="f num" id="mCotizacion" type="number" step="0.01" min="0" value="${m && m.cotizacion ? esc(m.cotizacion) : (rate() ? esc(Math.round(rate()*100)/100) : "")}">
+        </div>
+      </div>
+      <p class="hint" style="margin:6px 0 0">Se guarda con el movimiento para congelar su valor en la otra moneda.</p>
+
+      <label class="f" for="mObservacion">Observación (opcional)</label>
+      <input class="f" id="mObservacion" autocomplete="off" value="${m ? esc(m.observacion) : ""}">
+
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn primary block" id="mGuardar">Guardar</button>
+      </div>
+      ${m ? `<div class="btn-row"><button class="btn danger block" id="mBorrar">Borrar movimiento</button></div>` : ""}
+    </div>
+  </div>`;
+
+  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
+  $("#mClose").onclick = cerrar;
+  $("#ovMov").onclick = e => { if(e.target.id === "ovMov") cerrar(); };
+
+  /* Ajusta el formulario al tipo y a las monedas de las cuentas elegidas */
+  function sync(){
+    const esInterno = tipo === "Interno";
+    const cuentaId  = $("#mCuenta").value;
+    const moneda    = monedaCuenta(cuentaId);
+
+    $("#simMonto").textContent = simbolo(moneda).trim();
+    $("#lblMonto").textContent = esInterno ? "Monto que sale" : "Monto";
+    $("#lblCuenta").textContent = tipo === "Ingreso" ? "Entra en" : esInterno ? "Sale de" : "Cuenta";
+
+    $("#bloqueDestino").classList.toggle("hidden", !esInterno);
+    $("#bloqueCategoria").classList.toggle("hidden", esInterno);
+
+    // Categorías según el tipo (se re-arma para respetar `Aplica`)
+    if(!esInterno){
+      const sel = $("#mCategoria").value || (m ? m.categoria : "");
+      const cats = catsPara(tipo);
+      $("#mCategoria").innerHTML = cats.length
+        ? cats.map(c => `<option value="${esc(c.id)}" ${sel===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("")
+        : `<option value="">(no hay categorías — creá una en Ajustes)</option>`;
+    }
+
+    if(esInterno){
+      const destId  = $("#mCuentaDestino").value;
+      const monDest = monedaCuenta(destId);
+      const cambio  = destId && monDest !== moneda;
+      $("#bloqueMontoDestino").classList.toggle("hidden", !cambio);
+      $("#simMontoDestino").textContent = simbolo(monDest).trim();
+      const info = $("#tcInfo");
+      if(cambio){
+        const a = parseFloat($("#mMonto").value) || 0;
+        const b = parseFloat($("#mMontoDestino").value) || 0;
+        const tc = tcImplicito({monto:a, montoDestino:b, moneda, monedaDestino:monDest});
+        info.classList.remove("hidden");
+        info.innerHTML = tc
+          ? `Tipo de cambio implícito: <b>$${nf(tc, 2)}</b> por USD.`
+          : `Cambio de moneda ${esc(moneda)} → ${esc(monDest)}: cargá los dos montos y calculo el tipo de cambio.`;
+        if(tc) $("#mCotizacion").value = Math.round(tc * 100) / 100;
+      }else{
+        info.classList.add("hidden");
+        if(destId && destId === cuentaId) { info.classList.remove("hidden"); info.textContent = "La cuenta destino tiene que ser distinta de la de origen."; }
+      }
+    }
+  }
+
+  // La cotización se autocompleta con el MEP del día del movimiento, salvo que la toques.
+  let cotTocada = !!(m && m.cotizacion);
+  $("#mCotizacion").oninput = () => { cotTocada = true; };
+  async function cotizacionDeLaFecha(){
+    if(cotTocada || tipo === "Interno") return;
+    const v = await mepDe($("#mFecha").value);
+    const el = $("#mCotizacion");                 // puede haberse cerrado el modal mientras tanto
+    if(v > 0 && el && !cotTocada) el.value = Math.round(v * 100) / 100;
+  }
+  $("#mFecha").onchange = cotizacionDeLaFecha;
+  if(!m) cotizacionDeLaFecha();
+
+  $$("#segTipo button").forEach(b => b.onclick = () => {
+    tipo = b.dataset.tipo;
+    $$("#segTipo button").forEach(x => x.classList.toggle("on", x === b));
+    sync();
+  });
+  ["#mCuenta","#mCuentaDestino","#mMonto","#mMontoDestino"].forEach(sel => {
+    const el = $(sel);
+    if(el){ el.onchange = sync; el.oninput = sync; }
+  });
+  sync();
+  setTimeout(() => { const el = $("#mMonto"); if(el) el.focus(); }, 50);
+
+  $("#mGuardar").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    const esInterno = tipo === "Interno";
+    const fecha  = $("#mFecha").value || todayIso();
+    const cuenta = $("#mCuenta").value;
+    const moneda = monedaCuenta(cuenta);
+    const monto  = parseFloat($("#mMonto").value) || 0;
+    const cuentaDestino = esInterno ? $("#mCuentaDestino").value : "";
+    const monedaDestino = esInterno ? monedaCuenta(cuentaDestino) : "";
+    const categoria = esInterno ? "" : $("#mCategoria").value;
+    let montoDestino = esInterno ? (parseFloat($("#mMontoDestino").value) || 0) : null;
+    if(esInterno && monedaDestino === moneda) montoDestino = monto;   // misma moneda: entra lo mismo que sale
+
+    if(!(monto > 0)){ toast("El monto tiene que ser mayor a cero"); $("#mMonto").focus(); return; }
+    if(esInterno){
+      if(!cuentaDestino){ toast("Elegí la cuenta destino"); return; }
+      if(cuentaDestino === cuenta){ toast("La cuenta destino tiene que ser distinta"); return; }
+      if(!(montoDestino > 0)){ toast("Cargá el monto que entra"); $("#mMontoDestino").focus(); return; }
+    }else if(!categoria){
+      toast("Elegí una categoría (o creá una en Ajustes)"); return;
+    }
+
+    const concepto = $("#mConcepto").value.trim() ||
+      (esInterno ? "Transferencia interna" : (catPorId(categoria) || {}).nombre || "");
+
+    const mov = {
+      id: m ? m.id : uid(),
+      mes: mesDe(fecha),
+      fecha, tipo, categoria, concepto,
+      cuenta, cuentaDestino, moneda, monto,
+      monedaDestino, montoDestino,
+      cotizacion: parseFloat($("#mCotizacion").value) || null,
+      modoPago: $("#mModoPago").value,
+      observacion: $("#mObservacion").value.trim(),
+      timestamp: (m && m.timestamp) || new Date().toISOString()
+    };
+
+    b.disabled = true; b.textContent = "Guardando…";
+    try{
+      await api({action:"saveMovimiento", mov});
+      const i = state.movimientos.findIndex(x => x.id === mov.id);
+      if(i >= 0) state.movimientos[i] = mov; else state.movimientos.push(mov);
+      state.movimientos = ordenarMovs(state.movimientos);
+      state.mes = mov.mes;                       // saltamos al mes del movimiento guardado
+      cerrar();
+      render();
+      toast(m ? "Movimiento actualizado" : "Movimiento guardado");
+    }catch(e){
+      toast(e.message);
+      b.disabled = false; b.textContent = "Guardar";
+    }
+  };
+
+  const btnBorrar = $("#mBorrar");
+  if(btnBorrar) btnBorrar.onclick = async (ev) => {
+    if(!confirm(`¿Borrar "${m.concepto || "este movimiento"}"?`)) return;
+    const b = ev.currentTarget;
+    b.disabled = true; b.textContent = "Borrando…";
+    try{
+      await api({action:"deleteMovimiento", id:m.id});
+      state.movimientos = state.movimientos.filter(x => x.id !== m.id);
+      cerrar();
+      render();
+      toast("Movimiento borrado");
+    }catch(e){
+      toast(e.message);
+      b.disabled = false; b.textContent = "Borrar movimiento";
+    }
+  };
+}
+
 /* ── Ajustes ── */
 function viewAjustes(){
   return `
     <h2 class="tab-title">Ajustes</h2>
     ${cardConexion()}
     ${cardCotizacion()}
-    ${cardCuentas()}`;
+    ${cardCuentas()}
+    ${cardCategorias()}
+    ${cardModosPago()}`;
 }
 
 function cardConexion(){
@@ -514,6 +1014,227 @@ function filaCuenta(c){
   </div>`;
 }
 
+function cardCategorias(){
+  const aplicaL = v => (APLICA.find(x => x.v === v) || APLICA[2]).l;
+  let cuerpo;
+  if(!state.conectado){
+    cuerpo = `<div class="empty"><div class="t">Sin conexión</div><div class="s">Conectá tu backend para administrar categorías.</div></div>`;
+  }else if(!state.categorias.length){
+    cuerpo = `<div class="empty">
+      <div class="big">🏷️</div>
+      <div class="t">Todavía no hay categorías</div>
+      <div class="s">Creá las tuyas o arrancá con un set típico que después podés editar y borrar.</div>
+      <div class="btn-row" style="justify-content:center"><button class="btn ghost sm" id="btnSeedCats">Cargar sugeridas</button></div>
+    </div>`;
+  }else{
+    cuerpo = state.categorias.map(c => `
+      <div class="item">
+        <span class="swatch" style="background:${esc(c.color || COLOR_DEFAULT)}"></span>
+        <span class="nm">${esc(c.nombre)}</span>
+        <span class="tag">${aplicaL(c.aplica)}</span>
+        <span class="acts">
+          <button data-editcat="${esc(c.id)}" title="Editar">✏️</button>
+          <button data-delcat="${esc(c.id)}" title="Borrar">🗑️</button>
+        </span>
+      </div>`).join("");
+  }
+  return `
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h3>Categorías</h3>
+        <p class="hint" style="margin-bottom:0">Un solo nivel. Cada una aplica a egresos, a ingresos o a ambos.</p>
+      </div>
+      <button class="btn primary sm" id="btnNuevaCat" ${state.conectado ? "" : "disabled"} style="flex-shrink:0">＋ Nueva</button>
+    </div>
+    <div style="margin-top:10px">${cuerpo}</div>
+  </div>`;
+}
+
+function cardModosPago(){
+  let cuerpo;
+  if(!state.conectado){
+    cuerpo = `<div class="empty"><div class="t">Sin conexión</div><div class="s">Conectá tu backend para administrar modos de pago.</div></div>`;
+  }else if(!state.modosPago.length){
+    cuerpo = `<div class="empty">
+      <div class="big">💳</div>
+      <div class="t">Todavía no hay modos de pago</div>
+      <div class="s">Efectivo, débito, crédito, transferencia… complementan a la cuenta del movimiento.</div>
+      <div class="btn-row" style="justify-content:center"><button class="btn ghost sm" id="btnSeedModos">Cargar sugeridos</button></div>
+    </div>`;
+  }else{
+    cuerpo = state.modosPago.map(x => `
+      <div class="item">
+        <span class="nm">${esc(x.nombre)}</span>
+        <span class="acts">
+          <button data-editmodo="${esc(x.id)}" title="Renombrar">✏️</button>
+          <button data-delmodo="${esc(x.id)}" title="Borrar">🗑️</button>
+        </span>
+      </div>`).join("");
+  }
+  return `
+  <div class="card">
+    <div class="card-head"><h3>Modos de pago</h3></div>
+    <div style="margin-top:4px">${cuerpo}</div>
+    ${state.conectado ? `<div class="addrow">
+      <input id="nuevoModo" placeholder="Agregar modo de pago…" autocomplete="off">
+      <button class="btn primary sm" id="btnAddModo">Agregar</button>
+    </div>` : ""}
+  </div>`;
+}
+
+/* ── ABM Categorías ── */
+function modalCategoria(id){
+  const c = id ? state.categorias.find(x => x.id === id) : null;
+  $("#modalRoot").innerHTML = `
+  <div class="overlay" id="ovCat">
+    <div class="modal">
+      <button class="close" id="mClose">×</button>
+      <h3>${c ? "Editar categoría" : "Nueva categoría"}</h3>
+
+      <label class="f" for="kNombre">Nombre</label>
+      <input class="f" id="kNombre" value="${c ? esc(c.nombre) : ""}" placeholder="Supermercado" autocomplete="off">
+
+      <div class="row2">
+        <div>
+          <label class="f" for="kAplica">Aplica a</label>
+          <select class="f" id="kAplica">
+            ${APLICA.map(a => `<option value="${a.v}" ${c && c.aplica === a.v ? "selected" : ""}>${a.l}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="f" for="kOrden">Orden</label>
+          <input class="f num" id="kOrden" type="number" step="1" value="${c ? esc(c.orden || 0) : "0"}">
+        </div>
+      </div>
+
+      <label class="f" for="kColor">Color</label>
+      <input class="f" id="kColor" type="color" value="${c ? esc(c.color || COLOR_DEFAULT) : COLOR_DEFAULT}" style="height:44px;padding:4px">
+
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn primary block" id="mGuardar">Guardar</button>
+      </div>
+    </div>
+  </div>`;
+
+  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
+  $("#mClose").onclick = cerrar;
+  $("#ovCat").onclick = e => { if(e.target.id === "ovCat") cerrar(); };
+  setTimeout(() => { const el = $("#kNombre"); if(el) el.focus(); }, 50);
+
+  $("#mGuardar").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    const nombre = $("#kNombre").value.trim();
+    if(!nombre){ toast("La categoría necesita un nombre"); $("#kNombre").focus(); return; }
+    const categoria = {
+      id: c ? c.id : uid(),
+      nombre,
+      aplica: $("#kAplica").value,
+      color:  $("#kColor").value,
+      orden:  parseInt($("#kOrden").value, 10) || 0,
+      activo: true
+    };
+    b.disabled = true; b.textContent = "Guardando…";
+    try{
+      await api({action:"saveCategoria", categoria});
+      const i = state.categorias.findIndex(x => x.id === categoria.id);
+      if(i >= 0) state.categorias[i] = categoria; else state.categorias.push(categoria);
+      state.categorias.sort((a,z) => ((+a.orden||0)-(+z.orden||0)) || a.nombre.localeCompare(z.nombre, "es"));
+      cerrar(); render();
+      toast(c ? "Categoría actualizada" : "Categoría creada");
+    }catch(e){
+      toast(e.message);
+      b.disabled = false; b.textContent = "Guardar";
+    }
+  };
+}
+
+async function borrarCategoria(id){
+  const c = state.categorias.find(x => x.id === id);
+  if(!c || !confirm(`¿Borrar la categoría "${c.nombre}"?`)) return;
+  try{
+    await api({action:"deleteCategoria", id});
+    state.categorias = state.categorias.filter(x => x.id !== id);
+    render(); toast("Categoría borrada");
+  }catch(e){ toast(e.message); }
+}
+
+/* ── ABM Modos de pago ── */
+function modalModoPago(id){
+  const mp = id ? state.modosPago.find(x => x.id === id) : null;
+  $("#modalRoot").innerHTML = `
+  <div class="overlay" id="ovModo">
+    <div class="modal">
+      <button class="close" id="mClose">×</button>
+      <h3>${mp ? "Editar modo de pago" : "Nuevo modo de pago"}</h3>
+      <label class="f" for="pNombre">Nombre</label>
+      <input class="f" id="pNombre" value="${mp ? esc(mp.nombre) : ""}" placeholder="Transferencia" autocomplete="off">
+      <label class="f" for="pOrden">Orden</label>
+      <input class="f num" id="pOrden" type="number" step="1" value="${mp ? esc(mp.orden || 0) : "0"}">
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn primary block" id="mGuardar">Guardar</button>
+      </div>
+    </div>
+  </div>`;
+  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
+  $("#mClose").onclick = cerrar;
+  $("#ovModo").onclick = e => { if(e.target.id === "ovModo") cerrar(); };
+  setTimeout(() => { const el = $("#pNombre"); if(el) el.focus(); }, 50);
+
+  $("#mGuardar").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    const nombre = $("#pNombre").value.trim();
+    if(!nombre){ toast("Poné un nombre"); $("#pNombre").focus(); return; }
+    b.disabled = true; b.textContent = "Guardando…";
+    try{
+      await guardarModoPago({id: mp ? mp.id : uid(), nombre, orden: parseInt($("#pOrden").value, 10) || 0, activo:true});
+      cerrar(); render();
+      toast(mp ? "Modo de pago actualizado" : "Modo de pago creado");
+    }catch(e){
+      toast(e.message);
+      b.disabled = false; b.textContent = "Guardar";
+    }
+  };
+}
+
+async function guardarModoPago(modoPago){
+  await api({action:"saveModoPago", modoPago});
+  const i = state.modosPago.findIndex(x => x.id === modoPago.id);
+  if(i >= 0) state.modosPago[i] = modoPago; else state.modosPago.push(modoPago);
+  state.modosPago.sort((a,z) => ((+a.orden||0)-(+z.orden||0)) || a.nombre.localeCompare(z.nombre, "es"));
+}
+
+async function borrarModoPago(id){
+  const mp = state.modosPago.find(x => x.id === id);
+  if(!mp || !confirm(`¿Borrar "${mp.nombre}"?`)) return;
+  try{
+    await api({action:"deleteModoPago", id});
+    state.modosPago = state.modosPago.filter(x => x.id !== id);
+    render(); toast("Modo de pago borrado");
+  }catch(e){ toast(e.message); }
+}
+
+/* Carga en lote de los sets sugeridos */
+async function cargarSugeridos(que, btn){
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = "Cargando…";
+  try{
+    if(que === "categorias"){
+      const categorias = CATEGORIAS_SUGERIDAS.map(c => ({...c, id:uid(), activo:true}));
+      const d = await api({action:"saveCategorias", categorias});
+      state.categorias = (d.categorias || categorias).filter(c => c.activo !== false);
+    }else{
+      const modosPago = MODOS_SUGERIDOS.map((nombre, i) => ({id:uid(), nombre, orden:i+1, activo:true}));
+      const d = await api({action:"saveModosPago", modosPago});
+      state.modosPago = (d.modosPago || modosPago).filter(m => m.activo !== false);
+    }
+    render(); toast("Listo, ya podés editarlos");
+  }catch(e){
+    toast(e.message);
+    btn.disabled = false; btn.textContent = prev;
+  }
+}
+
 function bindAjustes(){
   const url = $("#cfgUrl");
   const tok = $("#cfgToken");
@@ -570,6 +1291,38 @@ function bindAjustes(){
 
   $$("[data-edit]").forEach(b => b.onclick = () => modalCuenta(b.dataset.edit));
   $$("[data-del]").forEach(b => b.onclick = () => borrarCuenta(b.dataset.del));
+
+  const nuevaCat = $("#btnNuevaCat");
+  if(nuevaCat) nuevaCat.onclick = () => modalCategoria(null);
+  $$("[data-editcat]").forEach(b => b.onclick = () => modalCategoria(b.dataset.editcat));
+  $$("[data-delcat]").forEach(b => b.onclick = () => borrarCategoria(b.dataset.delcat));
+  const seedCats = $("#btnSeedCats");
+  if(seedCats) seedCats.onclick = ev => cargarSugeridos("categorias", ev.currentTarget);
+
+  $$("[data-editmodo]").forEach(b => b.onclick = () => modalModoPago(b.dataset.editmodo));
+  $$("[data-delmodo]").forEach(b => b.onclick = () => borrarModoPago(b.dataset.delmodo));
+  const seedModos = $("#btnSeedModos");
+  if(seedModos) seedModos.onclick = ev => cargarSugeridos("modos", ev.currentTarget);
+
+  const addModo = $("#btnAddModo"), inputModo = $("#nuevoModo");
+  if(addModo){
+    const agregar = async (ev) => {
+      const nombre = inputModo.value.trim();
+      if(!nombre){ inputModo.focus(); return; }
+      const b = ev.currentTarget && ev.currentTarget.tagName === "BUTTON" ? ev.currentTarget : addModo;
+      const prev = b.textContent;
+      b.disabled = true; b.textContent = "Guardando…";
+      try{
+        await guardarModoPago({id:uid(), nombre, orden:state.modosPago.length + 1, activo:true});
+        render(); toast("Modo de pago agregado");
+      }catch(e){
+        toast(e.message);
+        b.disabled = false; b.textContent = prev;
+      }
+    };
+    addModo.onclick = agregar;
+    inputModo.onkeydown = e => { if(e.key === "Enter") agregar(e); };
+  }
 }
 
 /* ── ABM Cuentas ── */
@@ -628,7 +1381,7 @@ function modalCuenta(id){
   const cerrar = () => { $("#modalRoot").innerHTML = ""; };
   $("#mClose").onclick = cerrar;
   $("#ovCuenta").onclick = e => { if(e.target.id === "ovCuenta") cerrar(); };
-  setTimeout(() => $("#fNombre").focus(), 50);
+  setTimeout(() => { const el = $("#fNombre"); if(el) el.focus(); }, 50);
 
   $("#mGuardar").onclick = async (ev) => {
     const b = ev.currentTarget;

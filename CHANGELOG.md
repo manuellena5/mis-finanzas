@@ -1,5 +1,28 @@
 # Changelog
 
+## Fase 2 — Movimientos (2026-08-26) ✅
+
+Alta, edición y borrado de movimientos uno por uno, más los dos ABM que los alimentan.
+
+**Backend `Code.gs`**
+- Hojas nuevas: `Movimientos` `[ID, Mes, Fecha, Tipo, Categoria, Concepto, Cuenta, CuentaDestino, Moneda, Monto, MonedaDestino, MontoDestino, Cotizacion, ModoPago, Observacion, Timestamp]`, `Categorias` `[ID, Nombre, Aplica, Color, Orden, Activo]` y `ModosPago` `[ID, Nombre, Orden, Activo]`.
+- Acciones: `listMovimientos` (opcionalmente por mes) / `saveMovimiento` / `deleteMovimiento`, `listCategorias` / `saveCategoria` / `saveCategorias` (lote) / `deleteCategoria`, y las equivalentes de `ModosPago`. `bootstrap` ahora devuelve `{cuentas, categorias, modosPago, movimientos, config}`.
+- `Cuenta`, `CuentaDestino` y `Categoria` guardan el **ID** de su ficha (renombrarlas no rompe el historial); `ModoPago` guarda el nombre.
+- `Mes` se deriva de la fecha en el backend, así siempre coincide.
+- Validación server-side: tipo válido, monto > 0, cuenta obligatoria y, en internos, cuenta destino distinta y monto de entrada > 0.
+- Guardas de borrado: no se borra una cuenta con movimientos ni una categoría en uso (devuelven el motivo).
+- Helpers nuevos `upsertBatch` / `upsert` / `borrarPorId`; `saveCuenta` y `deleteCuenta` pasaron a usarlos.
+
+**Frontend `index.html`**
+- **Pantalla Movimientos**: navegación por mes (‹ › y "Hoy"), filtros por tipo, cuenta, categoría y búsqueda por concepto, lista agrupada por día y FAB ＋.
+- **Formulario** (modal) para Ingreso / Egreso / Interno: el símbolo de moneda sale de la cuenta elegida, las categorías se filtran por su campo `Aplica`, y en internos aparece la cuenta destino. Si las dos cuentas tienen distinta moneda se pide el monto que entra y se muestra el **tipo de cambio implícito** (venta MEP: `MontoDestino / Monto`), que además autocompleta `Cotizacion`. Con la misma moneda, lo que entra es igual a lo que sale.
+- `Cotizacion` se autocompleta con el MEP del día del movimiento (histórico de argentinadatos para fechas pasadas, con fallback al valor actual) y se puede editar a mano.
+- **Ajustes**: ABM de Categorías (nombre, aplica, color, orden) y de Modos de pago (alta inline, renombrar, borrar), ambos con un botón para cargar un set sugerido editable.
+
+**Verificado**: 20 checks del backend contra un mock de Google Sheets (CRUD, derivación de `Mes`, orden, filtro por mes, validaciones, guardas de borrado, encabezados) y el flujo completo en el navegador contra un backend falso (alta de los tres tipos, TC implícito, filtros, navegación de mes, edición con salto de mes, borrado, mobile/desktop).
+
+**Pendiente**: los totales del mes y el saldo por cuenta llegan con las Fases 4 y 5 (sumar ARS y USD necesita la conversión de la Fase 3). El toggle ARS/USD/Ambas sigue siendo sólo preferencia visual. La cotización histórica no se pudo probar de punta a punta acá (la API estaba bloqueada en el entorno de desarrollo); si falla, cae al valor actual.
+
 ## Fase 1.1 — Token de acceso (2026-08-26)
 
 La web app se publica como "Cualquiera con el enlace" (el `fetch` desde GitHub Pages no puede usar la sesión de Google), así que ahora **toda acción exige un token compartido**:
