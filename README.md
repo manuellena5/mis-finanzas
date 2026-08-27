@@ -14,7 +14,7 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | 2 | Categorías, modos de pago y alta/edición de movimientos | ✅ Completa |
 | 3 | Multimoneda (cotización congelada por movimiento, toggle real) | ✅ Completa |
 | 4 | Resumen (patrimonio, totales del mes, gráfico por categoría) | ✅ Completa |
-| 5 | Patrimonio: composición y detalle (el motor de saldos ya está) | ⏳ Pendiente |
+| 5 | Patrimonio: composición por moneda y por tipo, detalle por cuenta | ✅ Completa |
 | 6 | Inversiones | ⏳ Pendiente |
 | 7 | Importación de resúmenes | ⏳ Pendiente |
 

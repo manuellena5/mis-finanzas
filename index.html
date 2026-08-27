@@ -242,13 +242,14 @@ const TABS = [
 ];
 
 const TIPOS_CUENTA = [
-  {v:"efectivo",  l:"Efectivo",   ic:"💵"},
-  {v:"banco",     l:"Banco",      ic:"🏦"},
-  {v:"billetera", l:"Billetera",  ic:"📱"},
-  {v:"inversion", l:"Inversión",  ic:"📈"},
-  {v:"tarjeta",   l:"Tarjeta",    ic:"💳"},
-  {v:"otro",      l:"Otro",       ic:"📦"}
+  {v:"efectivo",  l:"Efectivo",   ic:"💵", color:"#198754"},
+  {v:"banco",     l:"Banco",      ic:"🏦", color:"#2563eb"},
+  {v:"billetera", l:"Billetera",  ic:"📱", color:"#7c3aed"},
+  {v:"inversion", l:"Inversión",  ic:"📈", color:"#EF9F27"},
+  {v:"tarjeta",   l:"Tarjeta",    ic:"💳", color:"#C53030"},
+  {v:"otro",      l:"Otro",       ic:"📦", color:"#64748b"}
 ];
+const COLOR_ARS = "#0F5132", COLOR_USD = "#2563eb";
 const tipoInfo = t => TIPOS_CUENTA.find(x => x.v === t) || TIPOS_CUENTA[5];
 
 const TIPOS_MOV = ["Ingreso","Egreso","Interno"];
@@ -380,16 +381,26 @@ function saldosPorCuenta(hasta){
   return s;
 }
 
+/* ── Acumulador bimonetario ──
+   Suma en ARS y en USD por separado: que un monto no se pueda expresar en una
+   moneda no lo saca del total de la otra (un saldo en pesos sigue sumando en
+   pesos aunque no haya cotización). */
+function acum(){ return {ars:0, usd:0, faltanArs:0, faltanUsd:0}; }
+function sumar(t, monto, moneda, tc){
+  const a = convertir(monto, moneda, "ARS", tc);
+  const u = convertir(monto, moneda, "USD", tc);
+  if(a == null) t.faltanArs++; else t.ars += a;
+  if(u == null) t.faltanUsd++; else t.usd += u;
+}
+/** Cuántos quedaron fuera del total que se está mirando. */
+const faltan = t => state.cur === "USD" ? t.faltanUsd : t.faltanArs;
+
 /** Patrimonio: suma de las cuentas marcadas `EnPatrimonio`, al dólar de hoy. */
 function patrimonio(hasta){
   const s = saldosPorCuenta(hasta);
-  const t = {ars:0, usd:0, sinCotizacion:0};
+  const t = acum();
   for(const c of state.cuentas){
-    if(!c.enPatrimonio) continue;
-    const ars = convertir(s[c.id], c.moneda, "ARS", rate());
-    const usd = convertir(s[c.id], c.moneda, "USD", rate());
-    if(ars == null || usd == null){ t.sinCotizacion++; continue; }
-    t.ars += ars; t.usd += usd;
+    if(c.enPatrimonio) sumar(t, s[c.id], c.moneda, rate());
   }
   return t;
 }
@@ -607,6 +618,7 @@ function render(){
   if(state.tab === "ajustes"){ c.innerHTML = viewAjustes(); bindAjustes(); }
   else if(state.tab === "movimientos"){ c.innerHTML = viewMovimientos(); bindMovimientos(); }
   else if(state.tab === "resumen"){ c.innerHTML = viewResumen(); bindResumen(); }
+  else if(state.tab === "patrimonio"){ c.innerHTML = viewPatrimonio(); }
   else c.innerHTML = viewProximamente(state.tab);
 }
 
@@ -640,17 +652,7 @@ function viewResumen(){
   const enPatrimonio = state.cuentas.filter(c => c.enPatrimonio);
   const fuera = state.cuentas.filter(c => !c.enPatrimonio);
 
-  const filaSaldo = c => {
-    const vista = montoVista(saldos[c.id], c.moneda, rate());
-    return `<div class="item">
-      <span style="width:20px;text-align:center;flex-shrink:0">${tipoInfo(c.tipo).ic}</span>
-      <span class="nm">${esc(c.nombre)}</span>
-      <span class="amt" style="text-align:right"${vista.tit ? ` title="${esc(vista.tit)}"` : ""}>
-        <span class="n num" style="font-weight:600;font-size:14px">${vista.txt}</span>
-        ${vista.sub ? `<span class="sub" style="display:block;font-size:10.5px;color:var(--faint)">${esc(vista.sub)}</span>` : ""}
-      </span>
-    </div>`;
-  };
+  const filaSaldo = c => filaSaldoCuenta(c, saldos[c.id], 0);   // el % vive en Patrimonio
 
   return `
     <h2 class="tab-title">Resumen</h2>
@@ -659,7 +661,7 @@ function viewResumen(){
       <div class="lbl">Patrimonio hoy</div>
       <div class="v num">${state.cur === "USD" ? fmt(p.usd, "USD", 0) : fmt(p.ars, "ARS", 0)}</div>
       ${state.cur === "ambas" ? `<div class="u num">${fmt(p.usd, "USD", 0)}</div>` : ""}
-      <div class="u">${enPatrimonio.length} ${enPatrimonio.length === 1 ? "cuenta" : "cuentas"} en patrimonio${p.sinCotizacion ? ` · ${p.sinCotizacion} sin cotización` : ""}</div>
+      <div class="u">${enPatrimonio.length} ${enPatrimonio.length === 1 ? "cuenta" : "cuentas"} en patrimonio${faltan(p) ? ` · ${faltan(p)} sin cotización` : ""}</div>
     </div>
 
     <div class="mesnav">
@@ -688,19 +690,16 @@ function viewResumen(){
 function cardGrafico(movsMes){
   const tipo = state.grafico === "Ingreso" ? "Ingreso" : "Egreso";
   const map = {};
-  let sinCot = 0;
   for(const m of movsMes){
     if(m.tipo !== tipo) continue;
-    const tc  = tcDe(m);
-    const ars = convertir(m.monto, m.moneda, "ARS", tc);
-    const usd = convertir(m.monto, m.moneda, "USD", tc);
-    if(ars == null || usd == null){ sinCot++; continue; }
     const k = m.categoria || "";
-    if(!map[k]) map[k] = {id:k, ars:0, usd:0};
-    map[k].ars += ars; map[k].usd += usd;
+    if(!map[k]) map[k] = Object.assign(acum(), {id:k});
+    sumar(map[k], m.monto, m.moneda, tcDe(m));
   }
-  const filas = Object.values(map).sort((a,b) => b.ars - a.ars);
-  const total = filas.reduce((a,x) => a + x.ars, 0);
+  const enUsd  = state.cur === "USD";
+  const filas  = Object.values(map).sort((a,b) => (enUsd ? b.usd - a.usd : b.ars - a.ars));
+  const sinCot = filas.reduce((a,f) => a + faltan(f), 0);
+  const total  = filas.reduce((a,x) => a + (enUsd ? x.usd : x.ars), 0);
 
   const pills = ["Egreso","Ingreso"].map(t =>
     `<button class="pill ${tipo===t?"on":""}" data-graf="${t}">${t}s</button>`).join("");
@@ -711,8 +710,9 @@ function cardGrafico(movsMes){
   }else{
     cuerpo = `<div class="bars">` + filas.map(f => {
       const cat = catPorId(f.id);
-      const pct = total ? Math.round(f.ars / total * 100) : 0;
-      const val = state.cur === "USD" ? fmt(f.usd, "USD", 0) : fmt(f.ars, "ARS", 0);
+      const v   = enUsd ? f.usd : f.ars;
+      const pct = total ? Math.round(v / total * 100) : 0;
+      const val = fmt(v, enUsd ? "USD" : "ARS", 0);
       return `<div class="bar">
         <div class="bl">
           <span class="dot" style="background:${esc(cat ? cat.color : COLOR_DEFAULT)}"></span>
@@ -741,6 +741,151 @@ function bindResumen(){
   $$("[data-graf]").forEach(b => b.onclick = () => { state.grafico = b.dataset.graf; render(); });
   const fab = $("#fabNuevo");
   if(fab) fab.onclick = () => modalMovimiento(null);
+}
+
+/* ══════════════════════ PATRIMONIO ══════════════════════ */
+function viewPatrimonio(){
+  if(!state.conectado){
+    return `<h2 class="tab-title">Patrimonio</h2>
+      <div class="card"><div class="empty">
+        <div class="big">🔌</div><div class="t">Sin conexión</div>
+        <div class="s">Conectá tu backend en <b>Ajustes</b> para ver tu patrimonio.</div>
+      </div></div>`;
+  }
+  if(!state.cuentas.length){
+    return `<h2 class="tab-title">Patrimonio</h2>
+      <div class="card"><div class="empty">
+        <div class="big">🏦</div><div class="t">Todavía no hay cuentas</div>
+        <div class="s">El patrimonio se arma con el saldo de tus cuentas. Creá la primera en <b>Ajustes</b>.</div>
+      </div></div>`;
+  }
+
+  const saldos = saldosPorCuenta();
+  const p      = patrimonio();
+  const enPat  = state.cuentas.filter(c => c.enPatrimonio);
+  const fuera  = state.cuentas.filter(c => !c.enPatrimonio);
+
+  /* Valor de cada cuenta en ARS y USD, al dólar de hoy */
+  const valorDe = c => ({
+    ars: convertir(saldos[c.id], c.moneda, "ARS", rate()),
+    usd: convertir(saldos[c.id], c.moneda, "USD", rate())
+  });
+
+  /* Composición: se reparte sobre los saldos positivos */
+  const grupos = (lista, claveDe, infoDe) => {
+    const map = {};
+    for(const c of lista){
+      const k = claveDe(c);
+      if(!map[k]) map[k] = Object.assign(acum(), infoDe(k));
+      sumar(map[k], saldos[c.id], c.moneda, rate());
+    }
+    return Object.values(map).sort((a,b) => (state.cur === "USD" ? b.usd - a.usd : b.ars - a.ars));
+  };
+
+  const porMoneda = grupos(enPat, c => c.moneda,
+    k => ({nombre:k === "USD" ? "Dólares" : "Pesos", color:k === "USD" ? COLOR_USD : COLOR_ARS}));
+  const porTipo = grupos(enPat, c => c.tipo,
+    k => ({nombre:tipoInfo(k).l, color:tipoInfo(k).color}));
+
+  const totalFuera = fuera.reduce((a,c) => { const v = valorDe(c); return a + (v.ars || 0); }, 0);
+  const totalFueraUsd = fuera.reduce((a,c) => { const v = valorDe(c); return a + (v.usd || 0); }, 0);
+
+  /* Detalle agrupado por tipo de cuenta */
+  const detalle = TIPOS_CUENTA.map(t => {
+    const cuentas = enPat.filter(c => c.tipo === t.v);
+    if(!cuentas.length) return "";
+    return `<p class="hint" style="margin:14px 0 2px">${t.ic} ${t.l}</p>` +
+      cuentas.map(c => filaSaldoCuenta(c, saldos[c.id], p.ars)).join("");
+  }).join("");
+
+  return `
+    <h2 class="tab-title">Patrimonio</h2>
+
+    <div class="hero">
+      <div class="lbl">Total hoy</div>
+      <div class="v num">${state.cur === "USD" ? fmt(p.usd, "USD", 0) : fmt(p.ars, "ARS", 0)}</div>
+      ${state.cur === "ambas" ? `<div class="u num">${fmt(p.usd, "USD", 0)}</div>` : ""}
+      <div class="u">${enPat.length} ${enPat.length === 1 ? "cuenta" : "cuentas"}${rate() ? ` · dólar de hoy $${nf(rate(), 0)}` : " · sin cotización"}</div>
+    </div>
+
+    ${cardComposicion("Por moneda", porMoneda)}
+    ${cardComposicion("Por tipo de cuenta", porTipo)}
+
+    <div class="card">
+      <div class="card-head"><h3>Detalle por cuenta</h3><span class="tag">hoy</span></div>
+      ${detalle || `<div class="empty"><div class="s">Ninguna cuenta suma al patrimonio.</div></div>`}
+    </div>
+
+    ${fuera.length ? `
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h3>Fuera del patrimonio</h3>
+          <p class="hint" style="margin-bottom:0">Cuentas con <b>EnPatrimonio</b> desactivado (normalmente tarjetas).</p>
+        </div>
+      </div>
+      <div style="margin-top:8px">${fuera.map(c => filaSaldoCuenta(c, saldos[c.id], 0)).join("")}</div>
+      <div class="item" style="border-top:1px solid var(--line);border-bottom:none;margin-top:4px">
+        <span class="nm" style="color:var(--muted)">Total</span>
+        <span class="num" style="font-weight:700;text-align:right">${totalVista(totalFuera, totalFueraUsd)}</span>
+      </div>
+      ${totalFuera < 0 ? `<p class="hint" style="margin:10px 0 0">Patrimonio neto descontando estas cuentas: <b>${state.cur === "USD" ? fmt(p.usd + totalFueraUsd, "USD", 0) : fmt(p.ars + totalFuera, "ARS", 0)}</b>.</p>` : ""}
+    </div>` : ""}
+
+    <div class="card">
+      <div class="card-head"><h3>Inversiones</h3><span class="tag">Fase 6</span></div>
+      <p class="hint" style="margin-bottom:0">Todavía no hay tenencias cargadas. Cuando existan, van a sumar acá y al total de arriba. Mientras tanto, una cuenta de tipo <b>Inversión</b> con su saldo cumple la misma función.</p>
+    </div>`;
+}
+
+/** Fila de cuenta con su saldo y, si se pasa el total, su peso en el patrimonio. */
+function filaSaldoCuenta(c, saldo, totalArs){
+  const vista = montoVista(saldo, c.moneda, rate());
+  const ars   = convertir(saldo, c.moneda, "ARS", rate());
+  const pct   = (totalArs > 0 && ars != null && ars > 0) ? Math.round(ars / totalArs * 100) : null;
+  return `<div class="item">
+    <span style="width:20px;text-align:center;flex-shrink:0">${tipoInfo(c.tipo).ic}</span>
+    <span class="nm">${esc(c.nombre)}</span>
+    ${pct != null ? `<span class="tag">${pct}%</span>` : ""}
+    <span style="text-align:right;flex-shrink:0"${vista.tit ? ` title="${esc(vista.tit)}"` : ""}>
+      <span class="num" style="font-weight:600;font-size:14px;display:block">${vista.txt}</span>
+      ${vista.sub ? `<span style="font-size:10.5px;color:var(--faint)">${esc(vista.sub)}</span>` : ""}
+    </span>
+  </div>`;
+}
+
+/** Tarjeta de composición: barras con el peso de cada grupo. */
+function cardComposicion(titulo, filasTodas){
+  const enUsd = state.cur === "USD";
+  const valor = f => enUsd ? f.usd : f.ars;
+  // Un grupo que no se pudo convertir no se muestra en cero: se avisa aparte.
+  const filas    = filasTodas.filter(f => valor(f) !== 0 || !faltan(f));
+  const omitidos = filasTodas.length - filas.length;
+  const total    = filas.reduce((a,f) => a + Math.max(0, valor(f)), 0);
+  if(!filas.length || total <= 0){
+    return `<div class="card">
+      <div class="card-head"><h3>${esc(titulo)}</h3></div>
+      <div class="empty" style="padding:18px 10px"><div class="s">Sin saldos positivos para repartir.</div></div>
+    </div>`;
+  }
+  const barras = filas.map(f => {
+    const pct = Math.round(Math.max(0, valor(f)) / total * 100);
+    const val = fmt(valor(f), enUsd ? "USD" : "ARS", 0);
+    return `<div class="bar">
+      <div class="bl">
+        <span class="dot" style="background:${esc(f.color)}"></span>
+        <span class="nm">${esc(f.nombre)}</span>
+        <span class="pct">${pct}%</span>
+        <span class="val num">${val}</span>
+      </div>
+      <div class="track"><div class="fill" style="width:${pct}%;background:${esc(f.color)}"></div></div>
+    </div>`;
+  }).join("");
+  return `<div class="card">
+    <div class="card-head"><h3>${esc(titulo)}</h3></div>
+    <div class="bars">${barras}</div>
+    ${omitidos ? `<p class="hint" style="margin:12px 0 0">${omitidos} ${omitidos === 1 ? "grupo quedó" : "grupos quedaron"} fuera: sin cotización para expresarlo${omitidos === 1 ? "" : "s"} en ${state.cur === "USD" ? "dólares" : "pesos"}.</p>` : ""}
+  </div>`;
 }
 
 /* ══════════════════════ MOVIMIENTOS ══════════════════════ */
@@ -861,18 +1006,12 @@ function filaMov(m){
 /* Totales del mes (de lo que se está viendo). Los internos no suman: mueven
    plata entre cuentas propias. Se calculan en las dos monedas y el toggle elige. */
 function totalesDe(movs){
-  const t = {ars:{ing:0, egr:0}, usd:{ing:0, egr:0}, sinCotizacion:0};
+  const ing = acum(), egr = acum();
   for(const m of movs){
     if(m.tipo === "Interno") continue;
-    const tc = tcDe(m);
-    const ars = convertir(m.monto, m.moneda, "ARS", tc);
-    const usd = convertir(m.monto, m.moneda, "USD", tc);
-    if(ars == null || usd == null){ t.sinCotizacion++; continue; }
-    const k = m.tipo === "Ingreso" ? "ing" : "egr";
-    t.ars[k] += ars;
-    t.usd[k] += usd;
+    sumar(m.tipo === "Ingreso" ? ing : egr, m.monto, m.moneda, tcDe(m));
   }
-  return t;
+  return {ing, egr};
 }
 
 /** Un total en la(s) moneda(s) del toggle. */
@@ -884,15 +1023,16 @@ function totalVista(ars, usd){
 
 function bloqueTotales(movs){
   const t = totalesDe(movs);
-  const netoArs = t.ars.ing - t.ars.egr, netoUsd = t.usd.ing - t.usd.egr;
-  const signoNeto = netoArs < 0 ? "neg" : "pos";
+  const netoArs = t.ing.ars - t.egr.ars, netoUsd = t.ing.usd - t.egr.usd;
+  const signoNeto = (state.cur === "USD" ? netoUsd : netoArs) < 0 ? "neg" : "pos";
+  const fuera = faltan(t.ing) + faltan(t.egr);
   return `
   <div class="tot">
-    <div class="b"><div class="lbl">Ingresos</div><div class="v pos">${totalVista(t.ars.ing, t.usd.ing)}</div></div>
-    <div class="b"><div class="lbl">Egresos</div><div class="v neg">${totalVista(t.ars.egr, t.usd.egr)}</div></div>
+    <div class="b"><div class="lbl">Ingresos</div><div class="v pos">${totalVista(t.ing.ars, t.ing.usd)}</div></div>
+    <div class="b"><div class="lbl">Egresos</div><div class="v neg">${totalVista(t.egr.ars, t.egr.usd)}</div></div>
     <div class="b"><div class="lbl">Neto</div><div class="v ${signoNeto}">${totalVista(netoArs, netoUsd)}</div></div>
   </div>
-  ${t.sinCotizacion ? `<p class="hint" style="margin:-4px 2px 10px">${t.sinCotizacion} ${t.sinCotizacion === 1 ? "movimiento quedó" : "movimientos quedaron"} fuera del total por no tener cotización.</p>` : ""}`;
+  ${fuera ? `<p class="hint" style="margin:-4px 2px 10px">${fuera} ${fuera === 1 ? "movimiento quedó" : "movimientos quedaron"} fuera del total por no tener cotización.</p>` : ""}`;
 }
 
 /** ARS por 1 USD implícito en un interno con cambio de moneda. */

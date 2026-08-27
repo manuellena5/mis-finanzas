@@ -1,5 +1,21 @@
 # Changelog
 
+## Fase 5 — Patrimonio (2026-08-26) ✅
+
+Pantalla de patrimonio con composición y detalle. Sin tocar el backend.
+
+**Pantalla Patrimonio**
+- Hero con el **total de hoy** y la cotización usada para valuarlo.
+- **Composición por moneda** (cuánto pesa lo que está en pesos y lo que está en dólares) y **por tipo de cuenta** (efectivo, banco, billetera, inversión), con barras y porcentajes.
+- **Detalle por cuenta agrupado por tipo**, con el peso de cada una en el patrimonio y, si el toggle convierte, el saldo original como referencia.
+- **Fuera del patrimonio**: las cuentas con `EnPatrimonio` desactivado (tarjetas) van aparte, con su total; si es negativo se muestra además el **patrimonio neto** descontándolas.
+- Sección de Inversiones que explica que se suman en la Fase 6, y que mientras tanto una cuenta de tipo *Inversión* cumple la misma función.
+
+**Bug corregido (afectaba a las Fases 3 y 4)**
+Los tres agregadores descartaban un monto de **ambas** monedas cuando no se podía expresar en una de ellas. Sin cotización cargada, el patrimonio en pesos daba `$0` aunque las cuentas en pesos no necesiten ninguna conversión, y lo mismo pasaba con los totales del mes y el gráfico. Ahora un acumulador bimonetario (`acum` / `sumar`) suma cada moneda por separado y cuenta aparte lo que falta en cada una: un saldo en pesos sigue sumando en pesos aunque no haya dólar. La composición no muestra un grupo en cero cuando no se pudo convertir: lo omite y avisa.
+
+**Verificado** con cinco cuentas en dos monedas, una tarjeta con saldo negativo y una compra de dólares (interno ARS→USD): saldos por cuenta, patrimonio total en ARS y USD, porcentajes de ambas composiciones, patrimonio neto descontando la tarjeta, y el caso sin cotización (los grupos en pesos siguen sumando, los de dólares se omiten con aviso). Las cinco pantallas renderizan sin errores y sin scroll horizontal en 375px, y Resumen y Patrimonio coinciden en el total.
+
 ## Fase 4 — Resumen (2026-08-26) ✅
 
 Dashboard con patrimonio, totales del mes, gráfico por categoría y saldo por cuenta. Sin tocar el backend.
