@@ -1,5 +1,23 @@
 # Changelog
 
+## Fase 3 — Multimoneda (2026-08-26) ✅
+
+El toggle ARS / USD / Ambas del header ahora afecta los datos, con la regla de oro del `PLAN.md`.
+
+**Conversión**
+- `convertir(monto, moneda, cur, tc)` es el único lugar donde se cambia de moneda; devuelve `null` si no hay cotización con la que hacerlo (nunca inventa un número).
+- **Movimientos: valor congelado a su fecha.** Cada uno se valúa con su propia `Cotizacion` (`tcDe`), no con la de hoy. Dos sueldos iguales de meses distintos dan USD distintos, que es el punto.
+- **Saldos: al dólar de hoy.** Las cuentas usan `valorHoy` con la cotización actual, porque representan cuánto valen ahora. `valorHoy` queda listo para el patrimonio de la Fase 5.
+- `montoVista` decide cómo se muestra: si hubo conversión, el monto convertido va arriba y **el original queda debajo como referencia** — nunca se ve un importe convertido con la etiqueta de su moneda original. El `title` explica a qué cotización se convirtió.
+
+**Aplicado en**
+- Lista de movimientos: montos y, en los internos, el lado destino (en vista nativa muestra lo que entra y el TC; convertido, ambos lados dan lo mismo).
+- **Totales del mes** (ingresos / egresos / neto) sobre lo que se está viendo, respetando los filtros. Los internos no suman: mueven plata entre cuentas propias. En "Ambas" se muestran las dos monedas; los movimientos sin ninguna cotización quedan fuera del total, con la aclaración de cuántos son.
+- Saldos de cuentas en Ajustes.
+- Aviso cuando no hay cotización del día y el toggle pide convertir.
+
+**Verificado** en el navegador con datos de las dos monedas y cotizaciones congeladas distintas (1000, 1500, 1531) frente a un dólar de hoy de 1600: cada movimiento se convierte con la suya, los totales cuadran en ARS y USD, el interno queda excluido, las cuentas se valúan a hoy (u$s 300 → $480.000), y el caso sin cotización muestra el monto nativo y se descuenta del total. Sin errores de consola y sin scroll horizontal en 375px.
+
 ## Fase 2 — Movimientos (2026-08-26) ✅
 
 Alta, edición y borrado de movimientos uno por uno, más los dos ABM que los alimentan.

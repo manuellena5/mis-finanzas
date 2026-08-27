@@ -124,6 +124,17 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .mesnav button.hoy{width:auto;padding:0 11px;height:30px;font-size:12px;font-weight:600;color:var(--muted)}
 .mesnav button:disabled{opacity:.4;cursor:default}
 
+.tot{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.tot .b{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:9px 11px;min-width:0}
+.tot .lbl{font-size:9.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.tot .v{font-weight:700;font-size:15px;margin-top:3px;font-family:'DM Mono',ui-monospace,monospace;overflow-wrap:anywhere}
+.tot .v.pos{color:var(--green-med)}
+.tot .v.neg{color:var(--danger)}
+.tot .v .u{display:block;font-size:11.5px;font-weight:500;color:var(--faint);margin-top:2px}
+@media(max-width:420px){ .tot{gap:6px} .tot .b{padding:8px 9px} .tot .v{font-size:13px} .tot .v .u{font-size:10.5px} }
+
+.avisocot{font-size:12px;color:var(--danger);background:var(--danger-bg);border-radius:9px;padding:8px 11px;margin-bottom:10px;line-height:1.5}
+
 .filtros{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
 .pill{padding:6px 12px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:12px;font-weight:500;cursor:pointer}
 .pill.on{border-color:var(--green);background:var(--green-bg);color:var(--green);font-weight:600}
@@ -290,7 +301,7 @@ function nf(n, dec){
 const simbolo = mon => (mon === "USD" ? "u$s " : "$");
 function fmt(monto, moneda, dec){
   const n = +monto || 0;
-  return (n < 0 ? "-" : "") + simbolo(moneda) + nf(n, dec);
+  return (n < 0 ? "−" : "") + simbolo(moneda) + nf(n, dec);
 }
 
 /* Fechas — internamente ISO YYYY-MM-DD, se muestran DD/MM/YYYY */
@@ -319,15 +330,44 @@ function dispDate(v){
 }
 
 /* ══════════════════════ COTIZACIÓN ══════════════════════ */
-/* Cuántos ARS vale 1 USD */
+/* Cuántos ARS vale 1 USD, hoy */
 function rate(){ return (state.mep && state.mep.venta > 0) ? state.mep.venta : null; }
-function toARS(monto, moneda){
-  if(moneda === "USD"){ const r = rate(); return r ? (+monto||0) * r : (+monto||0); }
-  return +monto || 0;
+
+/* ── Conversión ──
+   Regla de oro (PLAN.md):
+   · Un movimiento se valúa con SU cotización congelada, la del día en que pasó.
+   · Un saldo (cuentas, patrimonio) se valúa al dólar de HOY: representa cuánto vale ahora.
+   Devuelve null si no hay cotización con la que convertir. */
+function convertir(monto, moneda, cur, tc){
+  const n = +monto || 0;
+  if(!cur || cur === "ambas" || cur === moneda) return n;
+  if(!(tc > 0)) return null;
+  if(cur === "USD") return moneda === "ARS" ? n / tc : n;
+  return moneda === "USD" ? n * tc : n;
 }
-function toUSD(monto, moneda){
-  if(moneda === "ARS"){ const r = rate(); return r ? (+monto||0) / r : 0; }
-  return +monto || 0;
+/** Cotización de un movimiento: la congelada; si le falta, la de hoy. */
+const tcDe = m => (+m.cotizacion > 0 ? +m.cotizacion : rate());
+/** Valor de un movimiento en la moneda de vista (histórico). */
+const valorMov = (m, cur) => convertir(m.monto, m.moneda, cur, tcDe(m));
+/** Valor de hoy de un saldo (cuentas, inversiones, patrimonio). */
+const valorHoy = (monto, moneda, cur) => convertir(monto, moneda, cur, rate());
+
+function toARS(monto, moneda){ const v = convertir(monto, moneda, "ARS", rate()); return v == null ? (+monto||0) : v; }
+function toUSD(monto, moneda){ const v = convertir(monto, moneda, "USD", rate()); return v == null ? 0 : v; }
+
+/* Cómo mostrar un monto según el toggle. Si hubo conversión, el monto original
+   queda de referencia abajo: nunca se muestra un importe convertido con la
+   etiqueta de la moneda original. */
+function montoVista(monto, moneda, tc){
+  const nativo = fmt(monto, moneda);
+  if(state.cur === "ambas" || state.cur === moneda) return {txt:nativo, sub:"", tit:""};
+  const v = convertir(monto, moneda, state.cur, tc);
+  if(v == null){
+    return {txt:nativo, sub:"sin cotización",
+            tit:"No hay cotización cargada, así que se muestra el monto en " + moneda + "."};
+  }
+  return {txt:fmt(v, state.cur), sub:nativo,
+          tit:`${nativo} convertidos a ${state.cur} a $${nf(tc, 2)} por USD`};
 }
 
 const MEP_SOURCES = [
@@ -601,6 +641,8 @@ function viewMovimientos(){
         <button data-mes="1" title="Mes siguiente">›</button>
       </span>
     </div>
+    ${state.cur !== "ambas" && !rate() ? `<div class="avisocot">Sin cotización del día: los movimientos usan la que tienen guardada, pero los que no tengan ninguna quedan en su moneda original. Cargala en <b>Ajustes</b>.</div>` : ""}
+    ${bloqueTotales(movs)}
     <div class="filtros">${pills}</div>
     <div class="filtros">
       <input id="fTexto" type="search" placeholder="Buscar concepto…" value="${esc(f.texto)}">
@@ -619,26 +661,69 @@ function filaMov(m){
   tags.push(`<span class="tag">${esc(m.tipo === "Interno" ? nombreCuenta(m.cuenta) + " → " + nombreCuenta(m.cuentaDestino) : nombreCuenta(m.cuenta))}</span>`);
   if(m.modoPago) tags.push(`<span class="tag">${esc(m.modoPago)}</span>`);
 
-  let clase = "int", signo = "", sub = "";
+  let clase = "int", signo = "";
   if(m.tipo === "Ingreso"){ clase = "pos"; signo = "+"; }
   if(m.tipo === "Egreso"){  clase = "neg"; signo = "−"; }
-  if(m.tipo === "Interno"){
+
+  // Valuado con la cotización congelada del movimiento
+  const vista = montoVista(m.monto, m.moneda, tcDe(m));
+  let sub = vista.sub;
+  if(m.tipo === "Interno" && state.cur === "ambas"){
+    // En vista nativa mostramos lo que entra; convertido, ambos lados dan lo mismo.
     const cambio = m.monedaDestino && m.monedaDestino !== m.moneda;
-    sub = fmt(m.montoDestino || m.monto, m.monedaDestino || m.moneda) + (cambio ? " · TC " + nf(tcImplicito(m), 0) : "");
+    sub = "→ " + fmt(m.montoDestino || m.monto, m.monedaDestino || m.moneda) +
+          (cambio ? " · TC " + nf(tcImplicito(m), 0) : "");
   }
 
   return `
-  <button class="mov" data-mov="${esc(m.id)}">
+  <button class="mov" data-mov="${esc(m.id)}"${vista.tit ? ` title="${esc(vista.tit)}"` : ""}>
     <span class="dot" style="background:${esc(color)}"></span>
     <span class="info">
       <span class="cpt">${esc(m.concepto || "(sin concepto)")}</span>
       <span class="meta">${tags.join("")}</span>
     </span>
     <span class="amt">
-      <span class="n ${clase}">${signo}${fmt(m.monto, m.moneda)}</span>
+      <span class="n ${clase}">${signo}${vista.txt}</span>
       ${sub ? `<span class="sub">${esc(sub)}</span>` : ""}
     </span>
   </button>`;
+}
+
+/* Totales del mes (de lo que se está viendo). Los internos no suman: mueven
+   plata entre cuentas propias. Se calculan en las dos monedas y el toggle elige. */
+function totalesDe(movs){
+  const t = {ars:{ing:0, egr:0}, usd:{ing:0, egr:0}, sinCotizacion:0};
+  for(const m of movs){
+    if(m.tipo === "Interno") continue;
+    const tc = tcDe(m);
+    const ars = convertir(m.monto, m.moneda, "ARS", tc);
+    const usd = convertir(m.monto, m.moneda, "USD", tc);
+    if(ars == null || usd == null){ t.sinCotizacion++; continue; }
+    const k = m.tipo === "Ingreso" ? "ing" : "egr";
+    t.ars[k] += ars;
+    t.usd[k] += usd;
+  }
+  return t;
+}
+
+/** Un total en la(s) moneda(s) del toggle. */
+function totalVista(ars, usd){
+  if(state.cur === "USD") return fmt(usd, "USD", 0);
+  if(state.cur === "ARS") return fmt(ars, "ARS", 0);
+  return fmt(ars, "ARS", 0) + `<span class="u">${fmt(usd, "USD", 0)}</span>`;
+}
+
+function bloqueTotales(movs){
+  const t = totalesDe(movs);
+  const netoArs = t.ars.ing - t.ars.egr, netoUsd = t.usd.ing - t.usd.egr;
+  const signoNeto = netoArs < 0 ? "neg" : "pos";
+  return `
+  <div class="tot">
+    <div class="b"><div class="lbl">Ingresos</div><div class="v pos">${totalVista(t.ars.ing, t.usd.ing)}</div></div>
+    <div class="b"><div class="lbl">Egresos</div><div class="v neg">${totalVista(t.ars.egr, t.usd.egr)}</div></div>
+    <div class="b"><div class="lbl">Neto</div><div class="v ${signoNeto}">${totalVista(netoArs, netoUsd)}</div></div>
+  </div>
+  ${t.sinCotizacion ? `<p class="hint" style="margin:-4px 2px 10px">${t.sinCotizacion} ${t.sinCotizacion === 1 ? "movimiento quedó" : "movimientos quedaron"} fuera del total por no tener cotización.</p>` : ""}`;
 }
 
 /** ARS por 1 USD implícito en un interno con cambio de moneda. */
@@ -992,6 +1077,7 @@ function cardCuentas(){
 
 function filaCuenta(c){
   const ti = tipoInfo(c.tipo);
+  const vista = montoVista(c.saldoInicial, c.moneda, rate());   // un saldo se valúa al dólar de hoy
   return `
   <div class="acc">
     <div class="ico">${ti.ic}</div>
@@ -1003,9 +1089,9 @@ function filaCuenta(c){
         ${c.enPatrimonio ? `<span class="tag ok">en patrimonio</span>` : `<span class="tag off">fuera de patrimonio</span>`}
       </div>
     </div>
-    <div class="amt">
-      <div class="n num">${fmt(c.saldoInicial, c.moneda)}</div>
-      <div class="sub">desde ${dispDate(c.fechaInicial)}</div>
+    <div class="amt"${vista.tit ? ` title="${esc(vista.tit)}"` : ""}>
+      <div class="n num">${vista.txt}</div>
+      <div class="sub">${vista.sub ? esc(vista.sub) : "desde " + dispDate(c.fechaInicial)}</div>
     </div>
     <div class="acts">
       <button data-edit="${esc(c.id)}" title="Editar">✏️</button>
