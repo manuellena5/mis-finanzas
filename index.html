@@ -420,7 +420,7 @@ const valorInversion = i => (+i.valorActual || (+i.cantidad || 0) * (+i.precioAc
    Las tenencias son una foto de hoy, así que sólo entran cuando no hay fecha de corte. */
 function activosPatrimonio(hasta){
   const s = saldosPorCuenta(hasta);
-  const out = state.cuentas.filter(c => c.enPatrimonio).map(c => ({
+  const out = cuentasActivas().filter(c => c.enPatrimonio).map(c => ({
     id:c.id, nombre:c.nombre, moneda:c.moneda, monto:s[c.id], tipo:c.tipo, clase:"cuenta"
   }));
   if(!hasta){
@@ -587,6 +587,10 @@ function mesShift(mes, delta){
 }
 
 /* ── Lookups ── */
+/* Las archivadas siguen en `state.cuentas` para resolver el historial;
+   para operar (altas, patrimonio, saldos a la vista) sólo van las activas. */
+const cuentasActivas = () => state.cuentas.filter(c => c.activo !== false);
+const estaArchivada  = id => { const c = cuentaPorId(id); return !!c && c.activo === false; };
 const cuentaPorId = id => state.cuentas.find(c => c.id === id) || null;
 const catPorId    = id => state.categorias.find(c => c.id === id) || null;
 const nombreCuenta = id => (cuentaPorId(id) || {}).nombre || "cuenta borrada";
@@ -602,14 +606,14 @@ async function bootstrap(silent){
   state.cargando = true; state.error = ""; render();
   try{
     const d = await api({action:"bootstrap"});
-    state.cuentas     = ordenarCuentas((d.cuentas || []).filter(c => c.activo !== false));
+    state.cuentas     = ordenarCuentas(d.cuentas || []);
     state.categorias  = (d.categorias || []).filter(c => c.activo !== false);
     state.modosPago   = (d.modosPago || []).filter(m => m.activo !== false);
     state.movimientos = ordenarMovs((d.movimientos || []).map(m => ({...m, fecha:isoDate(m.fecha)})));
     state.inversiones = (d.inversiones || []).map(i => ({...i, fecha:isoDate(i.fecha)}));
     state.config      = d.config || {};
     state.conectado = true;
-    if(!silent) toast("Conectado · " + state.cuentas.length + (state.cuentas.length === 1 ? " cuenta" : " cuentas"));
+    if(!silent){ const n = cuentasActivas().length; toast("Conectado · " + n + (n === 1 ? " cuenta" : " cuentas")); }
     return true;
   }catch(e){
     state.conectado = false;
@@ -648,7 +652,7 @@ function renderBrandSub(){
   const s = $("#brandSub");
   if(!state.url || !state.token) s.textContent = "sin conectar";
   else if(state.cargando) s.textContent = "cargando…";
-  else if(state.conectado) s.textContent = state.cuentas.length + (state.cuentas.length === 1 ? " cuenta" : " cuentas");
+  else if(state.conectado){ const n = cuentasActivas().length; s.textContent = n + (n === 1 ? " cuenta" : " cuentas"); }
   else s.textContent = "sin conexión";
 }
 
@@ -694,8 +698,8 @@ function viewResumen(){
   const movsMes = state.movimientos.filter(m => mesDe(m.fecha) === state.mes);
   const p = patrimonio();                       // saldos de hoy, al dólar de hoy
   const saldos = saldosPorCuenta();
-  const enPatrimonio = state.cuentas.filter(c => c.enPatrimonio);
-  const fuera = state.cuentas.filter(c => !c.enPatrimonio);
+  const enPatrimonio = cuentasActivas().filter(c => c.enPatrimonio);
+  const fuera = cuentasActivas().filter(c => !c.enPatrimonio);
 
   const filaSaldo = c => filaSaldoCuenta(c, saldos[c.id], 0);   // el % vive en Patrimonio
 
@@ -723,7 +727,7 @@ function viewResumen(){
     <div class="card">
       <div class="card-head"><h3>Saldo por cuenta</h3><span class="tag">hoy</span></div>
       <div style="margin-top:6px">
-        ${state.cuentas.length ? enPatrimonio.map(filaSaldo).join("") : `<div class="empty"><div class="s">No hay cuentas todavía.</div></div>`}
+        ${enPatrimonio.length ? enPatrimonio.map(filaSaldo).join("") : `<div class="empty"><div class="s">Ninguna cuenta activa suma al patrimonio.</div></div>`}
       </div>
       ${fuera.length ? `<p class="hint" style="margin:12px 0 4px">Fuera del patrimonio</p>${fuera.map(filaSaldo).join("")}` : ""}
     </div>
@@ -1023,7 +1027,7 @@ function viewPatrimonio(){
         <div class="s">Conectá tu backend en <b>Ajustes</b> para ver tu patrimonio.</div>
       </div></div>`;
   }
-  if(!state.cuentas.length){
+  if(!cuentasActivas().length){
     return `<h2 class="tab-title">Patrimonio</h2>
       <div class="card"><div class="empty">
         <div class="big">🏦</div><div class="t">Todavía no hay cuentas</div>
@@ -1033,8 +1037,8 @@ function viewPatrimonio(){
 
   const saldos = saldosPorCuenta();
   const p      = patrimonio();
-  const enPat  = state.cuentas.filter(c => c.enPatrimonio);
-  const fuera  = state.cuentas.filter(c => !c.enPatrimonio);
+  const enPat  = cuentasActivas().filter(c => c.enPatrimonio);
+  const fuera  = cuentasActivas().filter(c => !c.enPatrimonio);
 
   /* Valor de cada cuenta en ARS y USD, al dólar de hoy */
   const valorDe = c => ({
@@ -1104,6 +1108,17 @@ function viewPatrimonio(){
       ${totalFuera < 0 ? `<p class="hint" style="margin:10px 0 0">Patrimonio neto descontando estas cuentas: <b>${state.cur === "USD" ? fmt(p.usd + totalFueraUsd, "USD", 0) : fmt(p.ars + totalFuera, "ARS", 0)}</b>.</p>` : ""}
     </div>` : ""}
 
+    ${(() => {
+      const conSaldo = state.cuentas.filter(c => c.activo === false && saldos[c.id]);
+      if(!conSaldo.length) return "";
+      return `
+      <div class="card">
+        <div class="card-head"><h3>Cuentas archivadas con saldo</h3></div>
+        <p class="hint">No suman al patrimonio. Si todavía tenés esa plata, reactivalas en Ajustes; si la cuenta se cerró, cargá el movimiento que la vació.</p>
+        <div>${conSaldo.map(c => filaSaldoCuenta(c, saldos[c.id], 0)).join("")}</div>
+      </div>`;
+    })()}
+
     ${cardInversionesEnPatrimonio()}`;
 }
 
@@ -1132,7 +1147,7 @@ function cardInversionesEnPatrimonio(){
     </div>`).join("");
 
   // Una cuenta de tipo Inversión con saldo, más tenencias cargadas, puede estar contando dos veces lo mismo.
-  const cuentasInv = state.cuentas.filter(c => c.enPatrimonio && c.tipo === "inversion" && saldosPorCuenta()[c.id] !== 0);
+  const cuentasInv = cuentasActivas().filter(c => c.enPatrimonio && c.tipo === "inversion" && saldosPorCuenta()[c.id] !== 0);
 
   return `
   <div class="card">
@@ -1217,7 +1232,7 @@ function viewMovimientos(){
         <div class="s">Conectá tu backend en <b>Ajustes</b> para cargar y ver movimientos.</div>
       </div></div>`;
   }
-  if(!state.cuentas.length){
+  if(!cuentasActivas().length){
     return `<h2 class="tab-title">Movimientos</h2>
       <div class="card"><div class="empty">
         <div class="big">🏦</div><div class="t">Primero creá una cuenta</div>
@@ -1233,7 +1248,7 @@ function viewMovimientos(){
     `<button class="pill ${f.tipo===t?"on":""}" data-ftipo="${t}">${t==="todos"?"Todos":t+"s"}</button>`).join("");
 
   const optCuentas = `<option value="">Todas las cuentas</option>` + state.cuentas.map(c =>
-    `<option value="${esc(c.id)}" ${f.cuenta===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("");
+    `<option value="${esc(c.id)}" ${f.cuenta===c.id?"selected":""}>${esc(c.nombre)}${c.activo === false ? " (archivada)" : ""}</option>`).join("");
   const optCats = `<option value="">Todas las categorías</option>` + state.categorias.map(c =>
     `<option value="${esc(c.id)}" ${f.categoria===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("");
 
@@ -1379,13 +1394,16 @@ function bindMovimientos(){
 /* ── Alta / edición de movimiento ── */
 function modalMovimiento(id){
   const m = id ? state.movimientos.find(x => x.id === id) : null;
-  if(!state.cuentas.length){ toast("Primero creá una cuenta en Ajustes"); return; }
+  if(!cuentasActivas().length){ toast("Primero creá una cuenta activa en Ajustes"); return; }
 
   // Estado local del formulario
   let tipo = m ? m.tipo : "Egreso";
 
-  const optCuentas = (sel) => state.cuentas.map(c =>
-    `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)} · ${esc(c.moneda)}</option>`).join("");
+  // Sólo activas; si el movimiento que se edita usa una archivada, se incluye para no perderla al guardar.
+  const usadas = m ? [m.cuenta, m.cuentaDestino].filter(Boolean) : [];
+  const cuentasForm = state.cuentas.filter(c => c.activo !== false || usadas.includes(c.id));
+  const optCuentas = (sel) => cuentasForm.map(c =>
+    `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)} · ${esc(c.moneda)}${c.activo === false ? " (archivada)" : ""}</option>`).join("");
   const optModos = `<option value="">—</option>` + state.modosPago.map(x =>
     `<option value="${esc(x.nombre)}" ${m && m.modoPago === x.nombre ? "selected" : ""}>${esc(x.nombre)}</option>`).join("");
 
@@ -1414,7 +1432,7 @@ function modalMovimiento(id){
       </div>
 
       <label class="f" for="mCuenta"><span id="lblCuenta">Cuenta</span></label>
-      <select class="f" id="mCuenta">${optCuentas(m ? m.cuenta : state.cuentas[0].id)}</select>
+      <select class="f" id="mCuenta">${optCuentas(m ? m.cuenta : cuentasForm[0].id)}</select>
 
       <div id="bloqueDestino" class="hidden">
         <label class="f" for="mCuentaDestino">Entra en</label>
@@ -1619,7 +1637,7 @@ function viewAjustes(){
 function cardConexion(){
   let status = `<div class="status">Pegá la URL <b>/exec</b> y el token de tu Apps Script para conectar la app con tu planilla.</div>`;
   if(state.cargando)       status = `<div class="status">Conectando…</div>`;
-  else if(state.conectado) status = `<div class="status ok">Conectado · ${state.cuentas.length} ${state.cuentas.length===1?"cuenta":"cuentas"}</div>`;
+  else if(state.conectado) status = `<div class="status ok">Conectado · ${cuentasActivas().length} ${cuentasActivas().length===1?"cuenta":"cuentas"}</div>`;
   else if(state.error)     status = `<div class="status err">${esc(state.error)}</div>`;
   return `
   <div class="card">
@@ -1678,14 +1696,21 @@ function cardCuentas(){
       <div class="s">Creá tus cuentas (efectivo, bancos, billeteras). Cada una tiene una sola moneda: ARS o USD.</div>
     </div>`;
   }else{
-    cuerpo = state.cuentas.map(filaCuenta).join("");
+    const activas    = cuentasActivas();
+    const archivadas = state.cuentas.filter(c => c.activo === false);
+    cuerpo = activas.map(filaCuenta).join("") ||
+      `<div class="empty" style="padding:20px 10px"><div class="s">Todas tus cuentas están archivadas.</div></div>`;
+    if(archivadas.length){
+      cuerpo += `<p class="hint" style="margin:16px 0 2px">Archivadas · no se pueden usar en movimientos nuevos ni suman al patrimonio, pero su historial se mantiene.</p>` +
+        archivadas.map(filaCuenta).join("");
+    }
   }
   return `
   <div class="card">
     <div class="card-head">
       <div>
         <h3>Cuentas</h3>
-        <p class="hint" style="margin-bottom:0">El saldo mostrado es el <b>saldo inicial</b>; los movimientos lo actualizan a partir de la Fase 5.</p>
+        <p class="hint" style="margin-bottom:0">El saldo mostrado es el saldo actual: el inicial más sus movimientos.</p>
       </div>
       <button class="btn primary sm" id="btnNuevaCuenta" ${state.conectado ? "" : "disabled"} style="flex-shrink:0">＋ Nueva</button>
     </div>
@@ -1694,28 +1719,55 @@ function cardCuentas(){
 }
 
 function filaCuenta(c){
-  const ti = tipoInfo(c.tipo);
-  const vista = montoVista(c.saldoInicial, c.moneda, rate());   // un saldo se valúa al dólar de hoy
+  const ti       = tipoInfo(c.tipo);
+  const saldo    = saldosPorCuenta()[c.id];
+  const vista    = montoVista(saldo, c.moneda, rate());   // un saldo se valúa al dólar de hoy
+  const archivada = c.activo === false;
   return `
-  <div class="acc">
+  <div class="acc"${archivada ? ` style="opacity:.6"` : ""}>
     <div class="ico">${ti.ic}</div>
     <div class="info">
       <div class="nm">${esc(c.nombre)}</div>
       <div class="meta">
         <span class="tag">${ti.l}</span>
         <span class="tag ${c.moneda === "USD" ? "usd" : ""}">${esc(c.moneda)}</span>
-        ${c.enPatrimonio ? `<span class="tag ok">en patrimonio</span>` : `<span class="tag off">fuera de patrimonio</span>`}
+        ${archivada
+          ? `<span class="tag off">archivada</span>`
+          : (c.enPatrimonio ? `<span class="tag ok">en patrimonio</span>` : `<span class="tag off">fuera de patrimonio</span>`)}
       </div>
     </div>
     <div class="amt"${vista.tit ? ` title="${esc(vista.tit)}"` : ""}>
       <div class="n num">${vista.txt}</div>
-      <div class="sub">${vista.sub ? esc(vista.sub) : "desde " + dispDate(c.fechaInicial)}</div>
+      <div class="sub">${vista.sub ? esc(vista.sub) : "inicial " + fmt(c.saldoInicial, c.moneda)}</div>
     </div>
     <div class="acts">
+      <button data-archivar="${esc(c.id)}" title="${archivada ? "Reactivar" : "Archivar"}">${archivada ? "↩️" : "📥"}</button>
       <button data-edit="${esc(c.id)}" title="Editar">✏️</button>
       <button data-del="${esc(c.id)}" title="Borrar">🗑️</button>
     </div>
   </div>`;
+}
+
+/** Archiva o reactiva una cuenta (campo `Activo` de la hoja). */
+async function archivarCuenta(id){
+  const c = cuentaPorId(id);
+  if(!c) return;
+  const archivar = c.activo !== false;
+  const saldo = saldosPorCuenta()[c.id];
+  if(archivar){
+    const aviso = saldo
+      ? `\n\nOjo: tiene un saldo de ${fmt(saldo, c.moneda)} que va a dejar de sumar al patrimonio.`
+      : "";
+    if(!confirm(`¿Archivar "${c.nombre}"?\n\nNo vas a poder usarla en movimientos nuevos, pero su historial se mantiene y la podés reactivar cuando quieras.${aviso}`)) return;
+  }
+  const cuenta = {...c, activo: !archivar};
+  try{
+    await api({action:"saveCuenta", cuenta});
+    const i = state.cuentas.findIndex(x => x.id === id);
+    if(i >= 0) state.cuentas[i] = cuenta;
+    render();
+    toast(archivar ? "Cuenta archivada" : "Cuenta reactivada");
+  }catch(e){ toast(e.message); }
 }
 
 function cardCategorias(){
@@ -1995,6 +2047,7 @@ function bindAjustes(){
 
   $$("[data-edit]").forEach(b => b.onclick = () => modalCuenta(b.dataset.edit));
   $$("[data-del]").forEach(b => b.onclick = () => borrarCuenta(b.dataset.del));
+  $$("[data-archivar]").forEach(b => b.onclick = () => archivarCuenta(b.dataset.archivar));
 
   const nuevaCat = $("#btnNuevaCat");
   if(nuevaCat) nuevaCat.onclick = () => modalCategoria(null);
@@ -2100,7 +2153,7 @@ function modalCuenta(id){
       fechaInicial: $("#fFecha").value || todayIso(),
       enPatrimonio: $("#fPatrimonio").checked,
       orden:        parseInt($("#fOrden").value, 10) || 0,
-      activo:       true
+      activo:       c ? c.activo !== false : true
     };
     b.disabled = true; b.textContent = "Guardando…";
     try{

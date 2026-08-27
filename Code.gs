@@ -109,7 +109,7 @@ function doGet(e) {
   return jsonResponse({
     ok: true,
     msg: "Mis Finanzas API activa",
-    version: "fase6.1",
+    version: "fase6.2",
     auth: "token",
     tokenConfigurado: !!getToken()
   });
@@ -227,7 +227,7 @@ function saveCuenta(c) {
 function deleteCuenta(id) {
   // Con movimientos asociados no se borra: quedarían huérfanos.
   const usada = listMovimientos().some(m => m.cuenta === String(id) || m.cuentaDestino === String(id));
-  if (usada) return { ok:false, error:"La cuenta tiene movimientos. Borralos o pasalos a otra cuenta primero." };
+  if (usada) return { ok:false, error:"La cuenta tiene movimientos. Archivala en vez de borrarla, o pasá esos movimientos a otra cuenta." };
   return borrarPorId(CUENTAS_SHEET, CUENTAS_COLS, id);
 }
 

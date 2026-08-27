@@ -1,5 +1,25 @@
 # Changelog
 
+## Cuentas archivables (2026-08-27)
+
+El campo `Activo` de `Cuentas` se usa por fin: se puede **archivar** una cuenta que ya no usás sin perder su historial. Es casi todo frontend; el backend sólo cambia un mensaje.
+
+**Qué hace archivar**
+- La cuenta **desaparece de las altas** de movimientos y **deja de sumar al patrimonio** y a las composiciones.
+- Su **historial se mantiene intacto**: los movimientos la referencian por ID, así que siguen mostrando su nombre, y el filtro por cuenta la incluye marcada como *(archivada)*.
+- Si editás un movimiento viejo que la usa, la cuenta aparece igual en el select (marcada) para no perderla al guardar.
+- Se **reactiva** con un clic.
+
+**Detalles**
+- Botón 📥 / ↩️ en cada fila de Ajustes → Cuentas; las archivadas se listan en su propia sección, atenuadas.
+- Al archivar, si la cuenta tiene saldo, el confirm lo dice. Y en Patrimonio aparece una tarjeta **"Cuentas archivadas con saldo"** para que esa plata no quede invisible.
+- `state.cuentas` ahora guarda **todas** las cuentas (las archivadas hacen falta para resolver el historial); `cuentasActivas()` filtra donde corresponde operar.
+- Corregido de paso: editar una cuenta archivada desde el modal la reactivaba sin querer (el formulario mandaba `activo: true` fijo).
+- La lista de Ajustes ahora muestra el **saldo actual** (inicial + movimientos) en vez del inicial, con el inicial como referencia.
+- `deleteCuenta` sugiere archivar en vez de borrar cuando la cuenta tiene movimientos. Es el único cambio del backend: el re-deploy es **opcional** (`version: "fase6.2"`).
+
+**Verificado** en el navegador: al archivar, el patrimonio baja de $130.000 a $100.000 y la cuenta pasa a su sección; el movimiento histórico sigue mostrando "Caja vieja"; el alta nueva no la ofrece pero la edición del movimiento viejo sí, ya seleccionada; editar la cuenta archivada no la reactiva; reactivar devuelve el saldo al patrimonio. Sin errores de consola ni scroll horizontal en 375px.
+
 ## Fase 6.1 — Timestamp en hora argentina (2026-08-27)
 
 La columna `Timestamp` de `Movimientos` se guardaba en UTC (`2026-08-26T21:40:24.849Z`): tres horas adelantada y con formato incómodo de leer en la planilla. Ahora se guarda como `2026-08-26 18:40:24`, en hora de Buenos Aires.
