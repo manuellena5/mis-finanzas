@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════
    MIS FINANZAS — Google Apps Script (Code.gs)
    Backend de un solo usuario sobre Google Sheets.
-   Fase 1: Cuentas + Config.
+   Hojas: Cuentas, Categorias, ModosPago, Movimientos, Inversiones, Config.
 
    SETUP:
    1. Creá una planilla nueva en Google Sheets (será la base de datos).
@@ -35,6 +35,7 @@ const CONFIG_SHEET  = "Config";
 const MOV_SHEET     = "Movimientos";
 const CAT_SHEET     = "Categorias";
 const MODOS_SHEET   = "ModosPago";
+const INV_SHEET     = "Inversiones";
 
 const CUENTAS_COLS = ["ID","Nombre","Tipo","Moneda","SaldoInicial","FechaInicial","EnPatrimonio","Orden","Activo"];
 const CONFIG_COLS  = ["clave","valor"];
@@ -47,6 +48,19 @@ const MOV_COLS = [
   "ID","Mes","Fecha","Tipo","Categoria","Concepto","Cuenta","CuentaDestino",
   "Moneda","Monto","MonedaDestino","MontoDestino","Cotizacion","ModoPago","Observacion","Timestamp"
 ];
+
+/* Tenencias cargadas a mano. `ValorActual` = Cantidad × PrecioActual, lo calcula
+   el backend para que la hoja se pueda leer y sumar sin la app. */
+const INV_COLS = ["ID","Broker","Especie","Descripcion","TipoActivo","Cantidad","PrecioActual","Moneda","ValorActual","Fecha"];
+
+/* Zona horaria de la app: los sellos de tiempo se guardan en hora argentina,
+   no en UTC, para que la planilla se lea directo. */
+const TZ = "America/Argentina/Buenos_Aires";
+
+/** "yyyy-MM-dd HH:mm:ss" en hora de Argentina. */
+function ahoraAR() {
+  return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd HH:mm:ss");
+}
 
 /* ───────── Token ─────────
    Vive en las Propiedades del script, no en el código. Para verlo o cambiarlo:
@@ -95,7 +109,7 @@ function doGet(e) {
   return jsonResponse({
     ok: true,
     msg: "Mis Finanzas API activa",
-    version: "fase2",
+    version: "fase6.1",
     auth: "token",
     tokenConfigurado: !!getToken()
   });
@@ -137,6 +151,12 @@ function handleAction(data) {
     case "saveMovimiento":   return saveMovimiento(data.mov);
     case "deleteMovimiento": return deleteMovimiento(data.id);
 
+    /* Inversiones */
+    case "listInversiones":  return { ok:true, inversiones: listInversiones() };
+    case "saveInversion":    return saveInversion(data.inversion);
+    case "saveInversiones":  return saveInversiones(data.inversiones || []);
+    case "deleteInversion":  return deleteInversion(data.id);
+
     /* Config */
     case "getConfig":    return { ok:true, config: getConfig() };
     case "setConfig":    return setConfig(data.clave, data.valor);
@@ -153,6 +173,7 @@ function handleBootstrap() {
     categorias:  listCategorias(),
     modosPago:   listModosPago(),
     movimientos: listMovimientos(),
+    inversiones: listInversiones(),
     config:      getConfig()
   };
 }
@@ -306,7 +327,7 @@ function movToRow(m) {
     numOrBlank(m.cotizacion),
     String(m.modoPago || ""),
     String(m.observacion || ""),
-    String(m.timestamp || new Date().toISOString())
+    String(m.timestamp || ahoraAR())
   ];
 }
 function rowToMov(r) {
@@ -326,7 +347,7 @@ function rowToMov(r) {
     cotizacion:    r[12] === "" || r[12] == null ? null : Number(r[12]),
     modoPago:      String(r[13] || ""),
     observacion:   String(r[14] || ""),
-    timestamp:     String(r[15] || "")
+    timestamp:     formatFechaHora(r[15])
   };
 }
 /** @param {string=} mes "YYYY-MM"; sin mes devuelve todos. */
@@ -343,8 +364,10 @@ function saveMovimiento(m) {
   const err = validarMovimiento(m);
   if (err) return { ok:false, error:err };
   if (!m.id) m.id = uid();
+  // El sello de tiempo lo pone el backend, en hora argentina, y sobrevive a las ediciones.
+  if (!String(m.timestamp || "").trim()) m.timestamp = ahoraAR();
   upsert(MOV_SHEET, MOV_COLS, movToRow(m), m.id);
-  return { ok:true, id:m.id };
+  return { ok:true, id:m.id, timestamp:m.timestamp };
 }
 function validarMovimiento(m) {
   if (!m) return "Movimiento vacío";
@@ -360,6 +383,66 @@ function validarMovimiento(m) {
   return "";
 }
 function deleteMovimiento(id) { return borrarPorId(MOV_SHEET, MOV_COLS, id); }
+
+/* ───────── Inversiones ───────── */
+function invToRow(i) {
+  const cantidad = Number(i.cantidad || 0);
+  const precio   = Number(i.precioActual || 0);
+  return [
+    String(i.id || uid()),
+    String(i.broker || ""),
+    String(i.especie || ""),
+    String(i.descripcion || ""),
+    String(i.tipoActivo || "otro"),
+    cantidad,
+    precio,
+    String(i.moneda || "ARS"),
+    cantidad * precio,          // ValorActual siempre derivado
+    formatFecha(i.fecha)
+  ];
+}
+function rowToInv(r) {
+  return {
+    id:           String(r[0]),
+    broker:       String(r[1] || ""),
+    especie:      String(r[2] || ""),
+    descripcion:  String(r[3] || ""),
+    tipoActivo:   String(r[4] || "otro"),
+    cantidad:     Number(r[5] || 0),
+    precioActual: Number(r[6] || 0),
+    moneda:       String(r[7] || "ARS"),
+    valorActual:  Number(r[8] || 0),
+    fecha:        formatFecha(r[9])
+  };
+}
+function listInversiones() {
+  const sh  = getOrCreateSheet(INV_SHEET, INV_COLS);
+  const all = sh.getDataRange().getValues();
+  if (all.length <= 1) return [];
+  return all.slice(1).filter(r => r[0]).map(rowToInv)
+    .sort((a,b) => a.broker.localeCompare(b.broker, "es") ||
+                   (a.especie || a.descripcion).localeCompare(b.especie || b.descripcion, "es"));
+}
+function saveInversion(i) {
+  if (!i) return { ok:false, error:"Tenencia vacía" };
+  if (!String(i.especie || "").trim() && !String(i.descripcion || "").trim()) {
+    return { ok:false, error:"La tenencia necesita una especie o una descripción" };
+  }
+  if (Number(i.cantidad) < 0 || Number(i.precioActual) < 0) {
+    return { ok:false, error:"Cantidad y precio no pueden ser negativos" };
+  }
+  if (!i.id) i.id = uid();
+  upsert(INV_SHEET, INV_COLS, invToRow(i));
+  return { ok:true, id:i.id };
+}
+function saveInversiones(lista) {
+  const rows = lista
+    .filter(i => String(i.especie || "").trim() || String(i.descripcion || "").trim())
+    .map(invToRow);
+  if (rows.length) upsertBatch(INV_SHEET, INV_COLS, rows);
+  return { ok:true, inversiones: listInversiones() };
+}
+function deleteInversion(id) { return borrarPorId(INV_SHEET, INV_COLS, id); }
 
 /* ───────── Config (clave/valor) ───────── */
 function getConfig() {
@@ -429,6 +512,10 @@ function getOrCreateSheet(name, cols) {
     h.setFontColor("#ffffff");
     h.setFontWeight("bold");
     sh.setFrozenRows(1);
+    // El Timestamp se guarda como texto en hora argentina: si Sheets lo tomara
+    // como fecha, lo reinterpretaría con la zona horaria de la planilla.
+    const iTs = cols.indexOf("Timestamp");
+    if (iTs >= 0) sh.getRange(2, iTs + 1, sh.getMaxRows() - 1, 1).setNumberFormat("@");
   }
   return sh;
 }
@@ -449,6 +536,38 @@ function toBool(v, def) {
   if (s === "false" || s === "no" || s === "0") return false;
   if (s === "true"  || s === "si" || s === "sí" || s === "1") return true;
   return def;
+}
+
+/** Sello de tiempo "yyyy-MM-dd HH:mm:ss" en hora argentina, venga como venga el valor. */
+function formatFechaHora(val) {
+  if (val === "" || val === null || val === undefined) return "";
+  if (val instanceof Date) return Utilities.formatDate(val, TZ, "yyyy-MM-dd HH:mm:ss");
+  const s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) return s;   // ya está en hora local
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {                                 // ISO viejo, en UTC
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return Utilities.formatDate(d, TZ, "yyyy-MM-dd HH:mm:ss");
+  }
+  return s;
+}
+
+/**
+ * Ejecutar UNA vez desde el editor si ya tenías movimientos cargados: pasa los
+ * `Timestamp` viejos (que estaban en UTC) a hora argentina y deja la columna
+ * como texto, para que Sheets no la reinterprete.
+ */
+function normalizarTimestamps() {
+  const sh   = getOrCreateSheet(MOV_SHEET, MOV_COLS);
+  const last = sh.getLastRow();
+  if (last < 2) return "No hay movimientos para normalizar.";
+  const col = MOV_COLS.indexOf("Timestamp") + 1;
+  const rng = sh.getRange(2, col, last - 1, 1);
+  const vals = rng.getValues().map(r => [formatFechaHora(r[0])]);
+  rng.setNumberFormat("@");
+  rng.setValues(vals);
+  const msg = "Listo: " + vals.length + " timestamps en hora argentina.";
+  Logger.log(msg);
+  return msg;
 }
 
 function formatFecha(val) {

@@ -15,7 +15,7 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | 3 | Multimoneda (cotización congelada por movimiento, toggle real) | ✅ Completa |
 | 4 | Resumen (patrimonio, totales del mes, gráfico por categoría) | ✅ Completa |
 | 5 | Patrimonio: composición por moneda y por tipo, detalle por cuenta | ✅ Completa |
-| 6 | Inversiones | ⏳ Pendiente |
+| 6 | Inversiones: ABM de tenencias y su aporte al patrimonio | ✅ Completa |
 | 7 | Importación de resúmenes | ⏳ Pendiente |
 
 Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
@@ -40,7 +40,7 @@ Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 7. **Implementar** → copiá la **URL** que termina en `/exec`.
 8. En la app: **Ajustes → Conexión**, pegá la URL y el token, y tocá **Guardar y conectar**.
 
-Las hojas (`Cuentas`, `Config`, y las que sumen las fases siguientes) se crean solas la primera vez, con sus encabezados.
+Las hojas (`Cuentas`, `Categorias`, `ModosPago`, `Movimientos`, `Inversiones`, `Config`) se crean solas la primera vez, con sus encabezados.
 
 La URL y el token se guardan en el `localStorage` del navegador: no viajan al repo ni quedan hardcodeados.
 
@@ -49,6 +49,14 @@ La URL y el token se guardan en el `localStorage` del navegador: no viajan al re
 Pegá el código, guardá, y después **Implementar → Administrar implementaciones → ✏️ editar → Versión: Nueva versión → Implementar**. Así la URL `/exec` sigue siendo la misma.
 
 Si en cambio creás una *implementación nueva*, te da otra URL y la vieja sigue sirviendo el código viejo — el síntoma típico es un error tipo `Accion desconocida: bootstrap`. Para saber qué versión está publicada, abrí tu URL `/exec` en el navegador: el JSON de salud dice `version` y `tokenConfigurado`.
+
+## Fechas y zona horaria
+
+Las fechas se guardan en ISO (`YYYY-MM-DD`) y se muestran como `DD/MM/YYYY`. El `Timestamp` de cada movimiento se guarda en **hora de Buenos Aires** (`2026-08-26 18:40:24`), no en UTC, y lo pone el backend: marca cuándo se cargó y no cambia al editar.
+
+Conviene que la planilla esté en la misma zona horaria: **Archivo → Configuración → Zona horaria → (GMT-03:00) Buenos Aires**.
+
+Si ya tenías movimientos cargados con el formato viejo en UTC, ejecutá **una vez** la función `normalizarTimestamps` desde el editor de Apps Script: convierte los sellos existentes a hora argentina y deja la columna como texto.
 
 ## Seguridad
 

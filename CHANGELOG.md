@@ -1,5 +1,38 @@
 # Changelog
 
+## Fase 6.1 — Timestamp en hora argentina (2026-08-27)
+
+La columna `Timestamp` de `Movimientos` se guardaba en UTC (`2026-08-26T21:40:24.849Z`): tres horas adelantada y con formato incómodo de leer en la planilla. Ahora se guarda como `2026-08-26 18:40:24`, en hora de Buenos Aires.
+
+- `Code.gs`: constante `TZ` y helper `ahoraAR()` con `Utilities.formatDate`. El sello lo pone **siempre el backend** (`saveMovimiento` lo devuelve en la respuesta) y **se conserva al editar**: sigue marcando cuándo se cargó el movimiento.
+- Lectura robusta con `formatFechaHora()`: si Sheets devolvió la celda como fecha, o si quedó un valor viejo en UTC, se normaliza a hora argentina en vez de propagarse mal.
+- La columna se marca como **texto** al crear la hoja, para que Sheets no la reinterprete con la zona horaria de la planilla.
+- `normalizarTimestamps()`: función para ejecutar **una vez** desde el editor si ya tenías movimientos cargados. Convierte los sellos viejos de UTC a hora argentina y deja la columna como texto.
+- El frontend ya no genera el sello: manda el campo vacío en las altas y usa el que devuelve el backend.
+
+**Verificado** con el mock de Sheets: formato sin `Z`, hora efectivamente UTC−3, sello conservado al editar, conversión de los valores viejos (21:40 UTC → 18:40 AR, y un caso que cambia de día: 1/7 02:30 UTC → 30/6 23:30 AR) y la migración sobre filas existentes. En el navegador, el alta manda el campo vacío y toma el sello del backend.
+
+**Requiere re-deploy** (`version: "fase6.1"`).
+
+## Fase 6 — Inversiones (2026-08-27) ✅
+
+ABM manual de tenencias y su aporte al patrimonio. **Vuelve a tocar el backend**: hay que re-deployar.
+
+**Backend `Code.gs`**
+- Hoja nueva `Inversiones` `[ID, Broker, Especie, Descripcion, TipoActivo, Cantidad, PrecioActual, Moneda, ValorActual, Fecha]`.
+- Acciones `listInversiones` / `saveInversion` / `saveInversiones` (lote, lista para la importación de la Fase 7) / `deleteInversion`. `bootstrap` las incluye.
+- `ValorActual` lo **deriva el backend** (`Cantidad × PrecioActual`) en cada guardado, así la hoja se puede leer y sumar sin la app.
+- Validación: hace falta especie o descripción, y ni cantidad ni precio pueden ser negativos.
+- `doGet` ahora reporta `version: "fase6"`.
+
+**Frontend `index.html`**
+- **Pantalla Inversiones**: total en tenencias, composición por tipo de activo (acciones, CEDEARs, bonos, ON, FCI, cripto, plazo fijo) y detalle agrupado por broker, con FAB para cargar.
+- Formulario con broker (autocompletado con los que ya usaste), especie, descripción, tipo, cantidad, precio, moneda y fecha de valuación. El **valor se calcula en vivo** y muestra el equivalente en la otra moneda al dólar de hoy.
+- **Aporte al patrimonio**: `activosPatrimonio()` unifica cuentas y tenencias, así que el total, la composición por moneda y la de por tipo ya las incluyen, en Patrimonio y en Resumen. Las tenencias son una foto de hoy: no entran cuando se pide un patrimonio con fecha de corte.
+- En Patrimonio, las tenencias aparecen con su total por broker, y hay un **aviso de doble conteo**: si además tenés una cuenta de tipo Inversión con saldo que representa lo mismo, avisa para que desmarques "Suma al patrimonio" en una de las dos.
+
+**Verificado**: 12 checks del backend contra el mock de Sheets (alta, `ValorActual` derivado y recalculado al editar, orden, validaciones, lote, borrado, `bootstrap` y encabezados) y el flujo completo en el navegador (alta de dos tenencias en distintas monedas, valor en vivo, agrupación por broker, edición, borrado, las tres monedas del toggle). El patrimonio con tenencias dio exactamente lo calculado a mano, y Resumen y Patrimonio coinciden. Las cinco pantallas sin errores de consola ni scroll horizontal en 375px.
+
 ## Fase 5 — Patrimonio (2026-08-26) ✅
 
 Pantalla de patrimonio con composición y detalle. Sin tocar el backend.

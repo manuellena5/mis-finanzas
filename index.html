@@ -273,6 +273,18 @@ const CATEGORIAS_SUGERIDAS = [
 ];
 const MODOS_SUGERIDOS = ["Efectivo","Débito","Crédito","Transferencia"];
 
+const TIPOS_ACTIVO = [
+  {v:"accion",     l:"Acciones",    color:"#2563eb"},
+  {v:"cedear",     l:"CEDEARs",     color:"#7c3aed"},
+  {v:"bono",       l:"Bonos",       color:"#0f766e"},
+  {v:"on",         l:"Obligaciones negociables", color:"#0891b2"},
+  {v:"fci",        l:"Fondos (FCI)", color:"#EF9F27"},
+  {v:"cripto",     l:"Cripto",      color:"#B44D1A"},
+  {v:"plazofijo",  l:"Plazo fijo",  color:"#198754"},
+  {v:"otro",       l:"Otro",        color:"#64748b"}
+];
+const activoInfo = t => TIPOS_ACTIVO.find(x => x.v === t) || TIPOS_ACTIVO[7];
+
 /* ══════════════════════ ESTADO ══════════════════════ */
 const state = {
   url:      localStorage.getItem("mf_url") || "",
@@ -284,6 +296,7 @@ const state = {
   categorias: [],
   modosPago:  [],
   movimientos: [],
+  inversiones: [],
   mes:      "",                                               // "YYYY-MM" que se está mirando
   grafico:  "Egreso",                                         // qué muestra el gráfico del Resumen
   filtros:  {tipo:"todos", cuenta:"", categoria:"", texto:""},
@@ -323,6 +336,11 @@ function fmt(monto, moneda, dec){
 function todayIso(){
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+/* Sello de tiempo local, sólo como respaldo: el que vale lo pone el backend. */
+function ahoraLocal(){
+  const d = new Date(), p = n => String(n).padStart(2,"0");
+  return todayIso() + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 }
 function isoDate(v){
   if(!v) return "";
@@ -395,13 +413,38 @@ function sumar(t, monto, moneda, tc){
 /** Cuántos quedaron fuera del total que se está mirando. */
 const faltan = t => state.cur === "USD" ? t.faltanUsd : t.faltanArs;
 
-/** Patrimonio: suma de las cuentas marcadas `EnPatrimonio`, al dólar de hoy. */
-function patrimonio(hasta){
+/** Valor de una tenencia: el guardado o, si falta, cantidad × precio. */
+const valorInversion = i => (+i.valorActual || (+i.cantidad || 0) * (+i.precioActual || 0));
+
+/* Todo lo que compone el patrimonio: cuentas marcadas `EnPatrimonio` + tenencias.
+   Las tenencias son una foto de hoy, así que sólo entran cuando no hay fecha de corte. */
+function activosPatrimonio(hasta){
   const s = saldosPorCuenta(hasta);
-  const t = acum();
-  for(const c of state.cuentas){
-    if(c.enPatrimonio) sumar(t, s[c.id], c.moneda, rate());
+  const out = state.cuentas.filter(c => c.enPatrimonio).map(c => ({
+    id:c.id, nombre:c.nombre, moneda:c.moneda, monto:s[c.id], tipo:c.tipo, clase:"cuenta"
+  }));
+  if(!hasta){
+    for(const i of state.inversiones){
+      out.push({
+        id:i.id, nombre:i.especie || i.descripcion, moneda:i.moneda, monto:valorInversion(i),
+        tipo:"inversion", clase:"inversion", broker:i.broker, tipoActivo:i.tipoActivo
+      });
+    }
   }
+  return out;
+}
+
+/** Patrimonio: cuentas + tenencias, al dólar de hoy. */
+function patrimonio(hasta){
+  const t = acum();
+  for(const a of activosPatrimonio(hasta)) sumar(t, a.monto, a.moneda, rate());
+  return t;
+}
+
+/** Total de las tenencias, al dólar de hoy. */
+function totalInversiones(){
+  const t = acum();
+  for(const i of state.inversiones) sumar(t, valorInversion(i), i.moneda, rate());
   return t;
 }
 
@@ -563,6 +606,7 @@ async function bootstrap(silent){
     state.categorias  = (d.categorias || []).filter(c => c.activo !== false);
     state.modosPago   = (d.modosPago || []).filter(m => m.activo !== false);
     state.movimientos = ordenarMovs((d.movimientos || []).map(m => ({...m, fecha:isoDate(m.fecha)})));
+    state.inversiones = (d.inversiones || []).map(i => ({...i, fecha:isoDate(i.fecha)}));
     state.config      = d.config || {};
     state.conectado = true;
     if(!silent) toast("Conectado · " + state.cuentas.length + (state.cuentas.length === 1 ? " cuenta" : " cuentas"));
@@ -619,6 +663,7 @@ function render(){
   else if(state.tab === "movimientos"){ c.innerHTML = viewMovimientos(); bindMovimientos(); }
   else if(state.tab === "resumen"){ c.innerHTML = viewResumen(); bindResumen(); }
   else if(state.tab === "patrimonio"){ c.innerHTML = viewPatrimonio(); }
+  else if(state.tab === "inversiones"){ c.innerHTML = viewInversiones(); bindInversiones(); }
   else c.innerHTML = viewProximamente(state.tab);
 }
 
@@ -743,6 +788,232 @@ function bindResumen(){
   if(fab) fab.onclick = () => modalMovimiento(null);
 }
 
+/* ══════════════════════ INVERSIONES ══════════════════════ */
+function viewInversiones(){
+  if(!state.conectado){
+    return `<h2 class="tab-title">Inversiones</h2>
+      <div class="card"><div class="empty">
+        <div class="big">🔌</div><div class="t">Sin conexión</div>
+        <div class="s">Conectá tu backend en <b>Ajustes</b> para cargar tus tenencias.</div>
+      </div></div>`;
+  }
+  if(!state.inversiones.length){
+    return `<h2 class="tab-title">Inversiones</h2>
+      <div class="card"><div class="empty">
+        <div class="big">📈</div>
+        <div class="t">Todavía no hay tenencias</div>
+        <div class="s">Cargá lo que tenés en cada broker (especie, cantidad y precio actual). Suman al patrimonio automáticamente.</div>
+        <div class="btn-row" style="justify-content:center"><button class="btn primary sm" id="btnNuevaInv">＋ Nueva tenencia</button></div>
+      </div></div>`;
+  }
+
+  const t = totalInversiones();
+
+  /* Composición por tipo de activo */
+  const porTipo = {};
+  for(const i of state.inversiones){
+    const k = i.tipoActivo || "otro";
+    if(!porTipo[k]) porTipo[k] = Object.assign(acum(), {nombre:activoInfo(k).l, color:activoInfo(k).color});
+    sumar(porTipo[k], valorInversion(i), i.moneda, rate());
+  }
+  const filasTipo = Object.values(porTipo).sort((a,b) => (state.cur === "USD" ? b.usd - a.usd : b.ars - a.ars));
+
+  /* Detalle agrupado por broker */
+  const brokers = {};
+  for(const i of state.inversiones){
+    const k = i.broker || "Sin broker";
+    (brokers[k] || (brokers[k] = [])).push(i);
+  }
+  const detalle = Object.keys(brokers).sort((a,b) => a.localeCompare(b, "es")).map(b => {
+    const sub = acum();
+    brokers[b].forEach(i => sumar(sub, valorInversion(i), i.moneda, rate()));
+    return `
+      <div class="card">
+        <div class="card-head">
+          <h3>${esc(b)}</h3>
+          <span class="num" style="font-weight:700;font-size:14px">${totalVista(sub.ars, sub.usd)}</span>
+        </div>
+        <div style="margin-top:6px">${brokers[b].map(filaInversion).join("")}</div>
+      </div>`;
+  }).join("");
+
+  return `
+    <h2 class="tab-title">Inversiones</h2>
+
+    <div class="hero">
+      <div class="lbl">Total en tenencias</div>
+      <div class="v num">${state.cur === "USD" ? fmt(t.usd, "USD", 0) : fmt(t.ars, "ARS", 0)}</div>
+      ${state.cur === "ambas" ? `<div class="u num">${fmt(t.usd, "USD", 0)}</div>` : ""}
+      <div class="u">${state.inversiones.length} ${state.inversiones.length === 1 ? "tenencia" : "tenencias"}${faltan(t) ? ` · ${faltan(t)} sin cotización` : ""}</div>
+    </div>
+
+    ${cardComposicion("Por tipo de activo", filasTipo)}
+    ${detalle}
+
+    <button class="fab" id="btnNuevaInv" title="Nueva tenencia">＋</button>`;
+}
+
+function filaInversion(i){
+  const info  = activoInfo(i.tipoActivo);
+  const vista = montoVista(valorInversion(i), i.moneda, rate());
+  const detalle = `${nf(i.cantidad)} × ${fmt(i.precioActual, i.moneda)}`;
+  return `
+  <button class="mov" data-inv="${esc(i.id)}"${vista.tit ? ` title="${esc(vista.tit)}"` : ""}>
+    <span class="dot" style="background:${esc(info.color)}"></span>
+    <span class="info">
+      <span class="cpt">${esc(i.especie || i.descripcion)}</span>
+      <span class="meta">
+        <span class="tag">${esc(info.l)}</span>
+        ${i.especie && i.descripcion ? `<span class="tag">${esc(i.descripcion)}</span>` : ""}
+        <span class="tag">${esc(detalle)}</span>
+      </span>
+    </span>
+    <span class="amt">
+      <span class="n num">${vista.txt}</span>
+      <span class="sub">${vista.sub ? esc(vista.sub) : dispDate(i.fecha)}</span>
+    </span>
+  </button>`;
+}
+
+function bindInversiones(){
+  const nueva = $("#btnNuevaInv");
+  if(nueva) nueva.onclick = () => modalInversion(null);
+  $$("[data-inv]").forEach(b => b.onclick = () => modalInversion(b.dataset.inv));
+}
+
+function modalInversion(id){
+  const i = id ? state.inversiones.find(x => x.id === id) : null;
+  const brokers = [...new Set(state.inversiones.map(x => x.broker).filter(Boolean))];
+
+  $("#modalRoot").innerHTML = `
+  <div class="overlay" id="ovInv">
+    <div class="modal">
+      <button class="close" id="mClose">×</button>
+      <h3>${i ? "Editar tenencia" : "Nueva tenencia"}</h3>
+      <p class="hint">Valuación manual: cargá el precio actual y el valor se calcula solo.</p>
+
+      <div class="row2">
+        <div>
+          <label class="f" for="iBroker">Broker</label>
+          <input class="f" id="iBroker" list="listaBrokers" placeholder="PPI, Balanz…" autocomplete="off" value="${i ? esc(i.broker) : ""}">
+          <datalist id="listaBrokers">${brokers.map(b => `<option value="${esc(b)}"></option>`).join("")}</datalist>
+        </div>
+        <div>
+          <label class="f" for="iTipo">Tipo de activo</label>
+          <select class="f" id="iTipo">
+            ${TIPOS_ACTIVO.map(t => `<option value="${t.v}" ${i && i.tipoActivo === t.v ? "selected" : ""}>${t.l}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+
+      <label class="f" for="iEspecie">Especie</label>
+      <input class="f" id="iEspecie" placeholder="AL30, AAPL, BTC…" autocomplete="off" value="${i ? esc(i.especie) : ""}">
+
+      <label class="f" for="iDescripcion">Descripción (opcional)</label>
+      <input class="f" id="iDescripcion" placeholder="Bonar 2030" autocomplete="off" value="${i ? esc(i.descripcion) : ""}">
+
+      <div class="row2">
+        <div>
+          <label class="f" for="iCantidad">Cantidad</label>
+          <input class="f num" id="iCantidad" type="number" step="any" min="0" inputmode="decimal" value="${i ? esc(i.cantidad) : ""}" placeholder="0">
+        </div>
+        <div>
+          <label class="f" for="iMoneda">Moneda</label>
+          <select class="f" id="iMoneda">
+            <option value="ARS" ${i && i.moneda === "ARS" ? "selected" : ""}>ARS</option>
+            <option value="USD" ${i && i.moneda === "USD" ? "selected" : ""}>USD</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label class="f" for="iPrecio">Precio actual</label>
+          <div class="inputmon">
+            <span class="sim" id="iSim">$</span>
+            <input class="f num" id="iPrecio" type="number" step="any" min="0" inputmode="decimal" value="${i ? esc(i.precioActual) : ""}" placeholder="0">
+          </div>
+        </div>
+        <div>
+          <label class="f" for="iFecha">Fecha de valuación</label>
+          <input class="f" id="iFecha" type="date" value="${i && i.fecha ? esc(isoDate(i.fecha)) : todayIso()}">
+        </div>
+      </div>
+
+      <div class="tcinfo" id="iValor"></div>
+
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn primary block" id="mGuardar">Guardar</button>
+      </div>
+      ${i ? `<div class="btn-row"><button class="btn danger block" id="mBorrar">Borrar tenencia</button></div>` : ""}
+    </div>
+  </div>`;
+
+  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
+  $("#mClose").onclick = cerrar;
+  $("#ovInv").onclick = e => { if(e.target.id === "ovInv") cerrar(); };
+  setTimeout(() => { const el = $("#iEspecie"); if(el) el.focus(); }, 50);
+
+  function sync(){
+    const moneda = $("#iMoneda").value;
+    const valor  = (parseFloat($("#iCantidad").value) || 0) * (parseFloat($("#iPrecio").value) || 0);
+    $("#iSim").textContent = simbolo(moneda).trim();
+    const otra = convertir(valor, moneda, moneda === "ARS" ? "USD" : "ARS", rate());
+    $("#iValor").innerHTML = `Valor de la tenencia: <b>${fmt(valor, moneda)}</b>` +
+      (otra != null ? ` · ${fmt(otra, moneda === "ARS" ? "USD" : "ARS")} al dólar de hoy` : "");
+  }
+  ["#iCantidad","#iPrecio","#iMoneda"].forEach(sel => { const el = $(sel); el.oninput = sync; el.onchange = sync; });
+  sync();
+
+  $("#mGuardar").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    const especie = $("#iEspecie").value.trim();
+    const descripcion = $("#iDescripcion").value.trim();
+    if(!especie && !descripcion){ toast("Poné al menos la especie"); $("#iEspecie").focus(); return; }
+    const cantidad = parseFloat($("#iCantidad").value) || 0;
+    const precioActual = parseFloat($("#iPrecio").value) || 0;
+    if(cantidad < 0 || precioActual < 0){ toast("Cantidad y precio no pueden ser negativos"); return; }
+
+    const inversion = {
+      id: i ? i.id : uid(),
+      broker: $("#iBroker").value.trim(),
+      especie, descripcion,
+      tipoActivo: $("#iTipo").value,
+      cantidad, precioActual,
+      moneda: $("#iMoneda").value,
+      valorActual: cantidad * precioActual,
+      fecha: $("#iFecha").value || todayIso()
+    };
+    b.disabled = true; b.textContent = "Guardando…";
+    try{
+      await api({action:"saveInversion", inversion});
+      const k = state.inversiones.findIndex(x => x.id === inversion.id);
+      if(k >= 0) state.inversiones[k] = inversion; else state.inversiones.push(inversion);
+      cerrar(); render();
+      toast(i ? "Tenencia actualizada" : "Tenencia cargada");
+    }catch(e){
+      toast(e.message);
+      b.disabled = false; b.textContent = "Guardar";
+    }
+  };
+
+  const btnBorrar = $("#mBorrar");
+  if(btnBorrar) btnBorrar.onclick = async (ev) => {
+    if(!confirm(`¿Borrar "${i.especie || i.descripcion}"?`)) return;
+    const b = ev.currentTarget;
+    b.disabled = true; b.textContent = "Borrando…";
+    try{
+      await api({action:"deleteInversion", id:i.id});
+      state.inversiones = state.inversiones.filter(x => x.id !== i.id);
+      cerrar(); render();
+      toast("Tenencia borrada");
+    }catch(e){
+      toast(e.message);
+      b.disabled = false; b.textContent = "Borrar tenencia";
+    }
+  };
+}
+
 /* ══════════════════════ PATRIMONIO ══════════════════════ */
 function viewPatrimonio(){
   if(!state.conectado){
@@ -771,20 +1042,21 @@ function viewPatrimonio(){
     usd: convertir(saldos[c.id], c.moneda, "USD", rate())
   });
 
-  /* Composición: se reparte sobre los saldos positivos */
-  const grupos = (lista, claveDe, infoDe) => {
+  /* Composición sobre todo lo que suma: cuentas + tenencias */
+  const activos = activosPatrimonio();
+  const grupos = (claveDe, infoDe) => {
     const map = {};
-    for(const c of lista){
-      const k = claveDe(c);
+    for(const a of activos){
+      const k = claveDe(a);
       if(!map[k]) map[k] = Object.assign(acum(), infoDe(k));
-      sumar(map[k], saldos[c.id], c.moneda, rate());
+      sumar(map[k], a.monto, a.moneda, rate());
     }
     return Object.values(map).sort((a,b) => (state.cur === "USD" ? b.usd - a.usd : b.ars - a.ars));
   };
 
-  const porMoneda = grupos(enPat, c => c.moneda,
+  const porMoneda = grupos(a => a.moneda,
     k => ({nombre:k === "USD" ? "Dólares" : "Pesos", color:k === "USD" ? COLOR_USD : COLOR_ARS}));
-  const porTipo = grupos(enPat, c => c.tipo,
+  const porTipo = grupos(a => a.tipo,
     k => ({nombre:tipoInfo(k).l, color:tipoInfo(k).color}));
 
   const totalFuera = fuera.reduce((a,c) => { const v = valorDe(c); return a + (v.ars || 0); }, 0);
@@ -805,7 +1077,7 @@ function viewPatrimonio(){
       <div class="lbl">Total hoy</div>
       <div class="v num">${state.cur === "USD" ? fmt(p.usd, "USD", 0) : fmt(p.ars, "ARS", 0)}</div>
       ${state.cur === "ambas" ? `<div class="u num">${fmt(p.usd, "USD", 0)}</div>` : ""}
-      <div class="u">${enPat.length} ${enPat.length === 1 ? "cuenta" : "cuentas"}${rate() ? ` · dólar de hoy $${nf(rate(), 0)}` : " · sin cotización"}</div>
+      <div class="u">${enPat.length} ${enPat.length === 1 ? "cuenta" : "cuentas"}${state.inversiones.length ? ` · ${state.inversiones.length} ${state.inversiones.length === 1 ? "tenencia" : "tenencias"}` : ""}${rate() ? ` · dólar de hoy $${nf(rate(), 0)}` : " · sin cotización"}</div>
     </div>
 
     ${cardComposicion("Por moneda", porMoneda)}
@@ -832,10 +1104,45 @@ function viewPatrimonio(){
       ${totalFuera < 0 ? `<p class="hint" style="margin:10px 0 0">Patrimonio neto descontando estas cuentas: <b>${state.cur === "USD" ? fmt(p.usd + totalFueraUsd, "USD", 0) : fmt(p.ars + totalFuera, "ARS", 0)}</b>.</p>` : ""}
     </div>` : ""}
 
+    ${cardInversionesEnPatrimonio()}`;
+}
+
+/** Las tenencias dentro del patrimonio: total por broker y aviso de doble conteo. */
+function cardInversionesEnPatrimonio(){
+  if(!state.inversiones.length){
+    return `
     <div class="card">
-      <div class="card-head"><h3>Inversiones</h3><span class="tag">Fase 6</span></div>
-      <p class="hint" style="margin-bottom:0">Todavía no hay tenencias cargadas. Cuando existan, van a sumar acá y al total de arriba. Mientras tanto, una cuenta de tipo <b>Inversión</b> con su saldo cumple la misma función.</p>
+      <div class="card-head"><h3>Inversiones</h3></div>
+      <p class="hint" style="margin-bottom:0">Todavía no hay tenencias cargadas. Las que cargues en <b>Inversiones</b> suman acá y al total de arriba.</p>
     </div>`;
+  }
+  const t = totalInversiones();
+  const porBroker = {};
+  for(const i of state.inversiones){
+    const k = i.broker || "Sin broker";
+    if(!porBroker[k]) porBroker[k] = Object.assign(acum(), {nombre:k});
+    sumar(porBroker[k], valorInversion(i), i.moneda, rate());
+  }
+  const filas = Object.values(porBroker)
+    .sort((a,b) => (state.cur === "USD" ? b.usd - a.usd : b.ars - a.ars))
+    .map(b => `<div class="item">
+      <span style="width:20px;text-align:center;flex-shrink:0">📈</span>
+      <span class="nm">${esc(b.nombre)}</span>
+      <span class="num" style="font-weight:600;font-size:14px;text-align:right">${totalVista(b.ars, b.usd)}</span>
+    </div>`).join("");
+
+  // Una cuenta de tipo Inversión con saldo, más tenencias cargadas, puede estar contando dos veces lo mismo.
+  const cuentasInv = state.cuentas.filter(c => c.enPatrimonio && c.tipo === "inversion" && saldosPorCuenta()[c.id] !== 0);
+
+  return `
+  <div class="card">
+    <div class="card-head">
+      <h3>Inversiones</h3>
+      <span class="num" style="font-weight:700;font-size:14px;text-align:right">${totalVista(t.ars, t.usd)}</span>
+    </div>
+    <div style="margin-top:6px">${filas}</div>
+    ${cuentasInv.length ? `<p class="hint" style="margin:12px 0 0">Ojo: ${cuentasInv.map(c => `<b>${esc(c.nombre)}</b>`).join(", ")} ${cuentasInv.length === 1 ? "es una cuenta" : "son cuentas"} de tipo Inversión con saldo. Si ${cuentasInv.length === 1 ? "representa" : "representan"} lo mismo que estas tenencias, el patrimonio lo está contando dos veces: desmarcá <b>Suma al patrimonio</b> en esa cuenta o dejá una sola de las dos fuentes.</p>` : ""}
+  </div>`;
 }
 
 /** Fila de cuenta con su saldo y, si se pasa el total, su peso en el patrimonio. */
@@ -1259,12 +1566,14 @@ function modalMovimiento(id){
       cotizacion: parseFloat($("#mCotizacion").value) || null,
       modoPago: $("#mModoPago").value,
       observacion: $("#mObservacion").value.trim(),
-      timestamp: (m && m.timestamp) || new Date().toISOString()
+      // El sello de tiempo lo pone el backend en hora argentina; al editar se conserva.
+      timestamp: (m && m.timestamp) || ""
     };
 
     b.disabled = true; b.textContent = "Guardando…";
     try{
-      await api({action:"saveMovimiento", mov});
+      const res = await api({action:"saveMovimiento", mov});
+      mov.timestamp = res.timestamp || mov.timestamp || ahoraLocal();
       const i = state.movimientos.findIndex(x => x.id === mov.id);
       if(i >= 0) state.movimientos[i] = mov; else state.movimientos.push(mov);
       state.movimientos = ordenarMovs(state.movimientos);
