@@ -36,6 +36,7 @@ const MOV_SHEET     = "Movimientos";
 const CAT_SHEET     = "Categorias";
 const MODOS_SHEET   = "ModosPago";
 const INV_SHEET     = "Inversiones";
+const REGLAS_SHEET  = "Reglas";
 
 const CUENTAS_COLS = ["ID","Nombre","Tipo","Moneda","SaldoInicial","FechaInicial","EnPatrimonio","Orden","Activo"];
 const CONFIG_COLS  = ["clave","valor"];
@@ -46,8 +47,12 @@ const MODOS_COLS   = ["ID","Nombre","Orden","Activo"];
    (así renombrarlas no rompe el historial). ModoPago guarda el nombre.       */
 const MOV_COLS = [
   "ID","Mes","Fecha","Tipo","Categoria","Concepto","Cuenta","CuentaDestino",
-  "Moneda","Monto","MonedaDestino","MontoDestino","Cotizacion","ModoPago","Observacion","Timestamp"
+  "Moneda","Monto","MonedaDestino","MontoDestino","Cotizacion","ModoPago","Observacion","Timestamp",
+  "Hash","Fuente"
 ];
+
+/* Reglas de autocategorización por patrón sobre el Concepto. */
+const REGLAS_COLS = ["ID","Patron","TipoPatron","Categoria","Tipo","Prioridad","Hits","Activo"];
 
 /* Tenencias cargadas a mano. `ValorActual` = Cantidad × PrecioActual, lo calcula
    el backend para que la hoja se pueda leer y sumar sin la app. */
@@ -109,7 +114,7 @@ function doGet(e) {
   return jsonResponse({
     ok: true,
     msg: "Mis Finanzas API activa",
-    version: "fase6.2",
+    version: "fase7",
     auth: "token",
     tokenConfigurado: !!getToken()
   });
@@ -149,7 +154,14 @@ function handleAction(data) {
     /* Movimientos */
     case "listMovimientos":  return { ok:true, movimientos: listMovimientos(data.mes) };
     case "saveMovimiento":   return saveMovimiento(data.mov);
+    case "saveMovimientos":  return saveMovimientos(data.movimientos || []);
     case "deleteMovimiento": return deleteMovimiento(data.id);
+
+    /* Reglas */
+    case "listReglas":  return { ok:true, reglas: listReglas() };
+    case "saveRegla":   return saveRegla(data.regla);
+    case "saveReglas":  return saveReglas(data.reglas || []);
+    case "deleteRegla": return deleteRegla(data.id);
 
     /* Inversiones */
     case "listInversiones":  return { ok:true, inversiones: listInversiones() };
@@ -174,6 +186,7 @@ function handleBootstrap() {
     modosPago:   listModosPago(),
     movimientos: listMovimientos(),
     inversiones: listInversiones(),
+    reglas:      listReglas(),
     config:      getConfig()
   };
 }
@@ -327,7 +340,9 @@ function movToRow(m) {
     numOrBlank(m.cotizacion),
     String(m.modoPago || ""),
     String(m.observacion || ""),
-    String(m.timestamp || ahoraAR())
+    String(m.timestamp || ahoraAR()),
+    String(m.hash || calcHash(m)),
+    String(m.fuente || "manual")
   ];
 }
 function rowToMov(r) {
@@ -347,7 +362,9 @@ function rowToMov(r) {
     cotizacion:    r[12] === "" || r[12] == null ? null : Number(r[12]),
     modoPago:      String(r[13] || ""),
     observacion:   String(r[14] || ""),
-    timestamp:     formatFechaHora(r[15])
+    timestamp:     formatFechaHora(r[15]),
+    hash:          String(r[16] || ""),
+    fuente:        String(r[17] || "manual")
   };
 }
 /** @param {string=} mes "YYYY-MM"; sin mes devuelve todos. */
@@ -369,6 +386,47 @@ function saveMovimiento(m) {
   upsert(MOV_SHEET, MOV_COLS, movToRow(m), m.id);
   return { ok:true, id:m.id, timestamp:m.timestamp };
 }
+/** Clave de deduplicación: fecha|centavos|concepto(40)|cuenta. */
+function calcHash(m) {
+  return [
+    formatFecha(m.fecha),
+    Math.round((Number(m.monto) || 0) * 100),
+    String(m.concepto || "").toLowerCase().slice(0, 40),
+    String(m.cuenta || "")
+  ].join("|");
+}
+
+/**
+ * Alta en lote (importación). Omite los que ya existen por `Hash`, tanto contra
+ * la hoja como dentro del mismo lote. La categoría puede venir vacía: los
+ * importados sin categorizar quedan pendientes y se resuelven con las reglas.
+ */
+function saveMovimientos(lista) {
+  if (!lista.length) return { ok:true, guardados:0, omitidos:0 };
+  const sh    = getOrCreateSheet(MOV_SHEET, MOV_COLS);
+  const all   = sh.getDataRange().getValues();
+  const iHash = MOV_COLS.indexOf("Hash");
+  const vistos = {};
+  for (let i = 1; i < all.length; i++) if (all[i][iHash]) vistos[String(all[i][iHash])] = true;
+
+  const filas = [], errores = [];
+  let omitidos = 0;
+  for (const m of lista) {
+    const err = validarMovimiento(m);
+    if (err) { errores.push(err); continue; }
+    if (!m.id) m.id = uid();
+    if (!String(m.timestamp || "").trim()) m.timestamp = ahoraAR();
+    if (!m.hash) m.hash = calcHash(m);
+    if (vistos[m.hash]) { omitidos++; continue; }
+    vistos[m.hash] = true;
+    filas.push(movToRow(m));
+  }
+  if (filas.length) sh.getRange(sh.getLastRow() + 1, 1, filas.length, MOV_COLS.length).setValues(filas);
+  const out = { ok:true, guardados:filas.length, omitidos:omitidos };
+  if (errores.length) out.errores = errores;
+  return out;
+}
+
 function validarMovimiento(m) {
   if (!m) return "Movimiento vacío";
   if (["Ingreso","Egreso","Interno"].indexOf(String(m.tipo)) < 0) return "Tipo inválido: " + m.tipo;
@@ -383,6 +441,54 @@ function validarMovimiento(m) {
   return "";
 }
 function deleteMovimiento(id) { return borrarPorId(MOV_SHEET, MOV_COLS, id); }
+
+/* ───────── Reglas ───────── */
+function reglaToRow(r) {
+  return [
+    String(r.id || uid()),
+    String(r.patron || ""),
+    String(r.tipoPatron || "contiene"),   // contiene | empieza | igual | regex
+    String(r.categoria || ""),
+    String(r.tipo || ""),                 // casi siempre vacío
+    Number(r.prioridad || 0),
+    Number(r.hits || 0),
+    r.activo === false ? false : true
+  ];
+}
+function rowToRegla(r) {
+  return {
+    id:         String(r[0]),
+    patron:     String(r[1] || ""),
+    tipoPatron: String(r[2] || "contiene"),
+    categoria:  String(r[3] || ""),
+    tipo:       String(r[4] || ""),
+    prioridad:  Number(r[5] || 0),
+    hits:       Number(r[6] || 0),
+    activo:     toBool(r[7], true)
+  };
+}
+function listReglas() {
+  const sh  = getOrCreateSheet(REGLAS_SHEET, REGLAS_COLS);
+  const all = sh.getDataRange().getValues();
+  if (all.length <= 1) return [];
+  return all.slice(1).filter(r => r[0]).map(rowToRegla)
+    .sort((a,b) => (b.prioridad - a.prioridad) || a.patron.localeCompare(b.patron, "es"));
+}
+function saveRegla(r) {
+  if (!r || !String(r.patron || "").trim()) return { ok:false, error:"La regla necesita un patrón" };
+  if (!String(r.categoria || "").trim() && !String(r.tipo || "").trim()) {
+    return { ok:false, error:"La regla tiene que asignar al menos una categoría o un tipo" };
+  }
+  if (!r.id) r.id = uid();
+  upsert(REGLAS_SHEET, REGLAS_COLS, reglaToRow(r));
+  return { ok:true, id:r.id };
+}
+function saveReglas(lista) {
+  const rows = lista.filter(r => String(r.patron || "").trim()).map(reglaToRow);
+  if (rows.length) upsertBatch(REGLAS_SHEET, REGLAS_COLS, rows);
+  return { ok:true, reglas: listReglas() };
+}
+function deleteRegla(id) { return borrarPorId(REGLAS_SHEET, REGLAS_COLS, id); }
 
 /* ───────── Inversiones ───────── */
 function invToRow(i) {

@@ -16,7 +16,8 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | 4 | Resumen (patrimonio, totales del mes, gráfico por categoría) | ✅ Completa |
 | 5 | Patrimonio: composición por moneda y por tipo, detalle por cuenta | ✅ Completa |
 | 6 | Inversiones: ABM de tenencias y su aporte al patrimonio | ✅ Completa |
-| 7 | Importación de resúmenes | ⏳ Pendiente |
+| 7 | Importación de resúmenes de tarjeta (.xlsx) + reglas de categorización | ✅ Completa |
+| 7.1 | Importación de PDF (banco y broker) y MercadoPago | ⏳ Pendiente |
 
 Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 
@@ -29,6 +30,8 @@ Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 | `manifest.json`, `sw.js`, `icon-*.png` | PWA: instalación y app-shell offline |
 | `PLAN.md`, `PROMPT_faseN_*.md` | Plan maestro y prompt de cada fase (locales, en `.gitignore`) |
 
+Única dependencia externa: **SheetJS** por CDN, para leer los `.xlsx` de los resúmenes. El archivo se procesa en el navegador: no se sube a ningún lado.
+
 ## Setup del backend (Google Apps Script) — una sola vez
 
 1. Creá una **planilla nueva** en [sheets.google.com](https://sheets.google.com) (será la base de datos).
@@ -40,7 +43,7 @@ Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 7. **Implementar** → copiá la **URL** que termina en `/exec`.
 8. En la app: **Ajustes → Conexión**, pegá la URL y el token, y tocá **Guardar y conectar**.
 
-Las hojas (`Cuentas`, `Categorias`, `ModosPago`, `Movimientos`, `Inversiones`, `Config`) se crean solas la primera vez, con sus encabezados.
+Las hojas (`Cuentas`, `Categorias`, `ModosPago`, `Movimientos`, `Inversiones`, `Reglas`, `Config`) se crean solas la primera vez, con sus encabezados.
 
 La URL y el token se guardan en el `localStorage` del navegador: no viajan al repo ni quedan hardcodeados.
 

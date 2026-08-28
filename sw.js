@@ -5,14 +5,18 @@
    - Estáticos propios y fuentes: cache-first.
    - Llamadas al Apps Script: no se interceptan (son POST y siempre van a la red).
 */
-const CACHE = "mis-finanzas-v1";
+const CACHE = "mis-finanzas-v2";
+
+// Lector de .xlsx para la importación de resúmenes
+const XLSX_CDN = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
 
 const SHELL = [
   "./",
   "./index.html",
   "./manifest.json",
   "./icon-192.png",
-  "./icon-512.png"
+  "./icon-512.png",
+  XLSX_CDN
 ];
 
 self.addEventListener("install", (e) => {
@@ -52,7 +56,7 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  const esFuente = url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com";
+  const esFuente = url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com" || url.hostname === "cdnjs.cloudflare.com";
   const esPropio = url.origin === location.origin;
   if (!esFuente && !esPropio) return;                  // APIs de cotización: siempre red
 

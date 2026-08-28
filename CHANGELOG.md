@@ -1,5 +1,42 @@
 # Changelog
 
+## Fase 7 — Importación de resúmenes de tarjeta + reglas (2026-08-28) ✅
+
+Importar el Excel de Amex/Visa de Santander y un motor de reglas que autocategoriza por patrón. **Requiere re-deploy** (`version: "fase7"`).
+
+**Backend `Code.gs`**
+- Hoja nueva `Reglas` `[ID, Patron, TipoPatron, Categoria, Tipo, Prioridad, Hits, Activo]` con su CRUD (`listReglas` / `saveRegla` / `saveReglas` / `deleteRegla`). `bootstrap` la incluye.
+- `Movimientos` suma dos columnas **al final**: `Hash` (dedupe) y `Fuente` (`manual` | `import`). Las existentes no se tocan.
+- `Hash` = `fecha|centavos|concepto(40)|cuentaID`, lo calcula el backend si viene vacío.
+- `saveMovimientos` (lote): valida cada fila, omite las que ya existen por `Hash` —contra la hoja y dentro del mismo lote— y devuelve `{guardados, omitidos}` más los errores de las filas inválidas, sin cortar el resto. La categoría puede venir vacía: lo importado sin categorizar queda pendiente.
+
+**Parser de tarjeta** (el validado en la v1, portado tal cual)
+- Lee el `.xlsx` con SheetJS **en el navegador**: el archivo no sale de tu máquina.
+- Saca total a pagar, cierre, vencimiento y los consumos, arrastrando la fecha cuando la celda viene vacía; separa pesos de dólares, los pagos (negativos) y el bloque de "Otros conceptos" (IVA, sellos, percepciones), que se fechan al cierre.
+- Deriva el **período** del cierre (cierre antes del día 15 ⇒ mes anterior) y detecta emisor y número de tarjeta.
+
+**Flujo de importación**
+- Botón **⬆ Importar resumen** en Movimientos: archivo (drag & drop), mapeo de cuentas, período editable y previsualización.
+- Como una cuenta tiene una sola moneda, la tarjeta se representa con **dos cuentas** (ARS y USD). Se autocompletan por número o emisor, y si falta la de dólares hay un botón para crearla (tipo tarjeta, fuera del patrimonio).
+- La preview marca los **duplicados** (destildados y en gris), precarga la categoría con las reglas, muestra chips de *impuesto* y *pago*, y **concilia** la suma de las líneas contra el total del resumen como aviso informativo.
+- Cada línea entra como Egreso (o Ingreso si es un pago o devolución), con la `Cotizacion` congelada del día —una consulta por fecha distinta, en paralelo— y `observacion` = `Resumen AAAA-MM · vence DD/MM/AAAA`.
+
+**Motor de reglas**
+- `aplicarReglas(concepto)` con match `contiene` / `empieza` / `igual` / `regex` (regex inválida no rompe: no matchea), resuelto por prioridad.
+- Al importar precarga categorías; en la carga manual, escribir el concepto **sugiere** la categoría y lo dice ("✨ sugerida por la regla «netflix»").
+- Crear reglas sin ir a Ajustes: checkbox en el formulario manual y, en la importación, una sola casilla que crea las reglas de todas las categorías que asignaste a mano. El patrón sale del concepto (sin dígitos ni símbolos, dos palabras).
+- **✨ Aplicar reglas a N sin categoría** en Movimientos, para lo ya importado.
+- ABM de reglas en Ajustes (patrón, tipo de match, categoría, prioridad, hits) con un set sugerido que además crea las categorías que falten (Suscripciones, Pago de tarjeta, Impuestos y sellos).
+- Los `Hits` se llevan solos cuando la regla se aplica en una importación o en el reprocesado.
+
+**Otros**
+- El select de categoría del formulario manual arranca en "— elegí una categoría —" en vez de la primera de la lista: antes se podía guardar una categoría por descuido.
+- SheetJS 0.18.5 por CDN, sumado a la precache del service worker (`mis-finanzas-v2`).
+
+**Verificado**: 20 checks del backend contra el mock de Sheets (reglas CRUD, dedupe contra la hoja y dentro del lote, categoría vacía permitida, hash, fuente, encabezados) y el flujo completo en el navegador generando resúmenes `.xlsx` reales con SheetJS y pasándolos por el input de archivo. Un resumen Amex de 10 líneas quedó con la cuota `(cuota 5/6)`, la fecha arrastrada, los u$s en la cuenta USD recién creada, el pago como Ingreso, los impuestos al cierre, y el **saldo de la tarjeta dio exactamente el total del resumen** ($−57.826,60 y u$s −21,99). Reimportar el mismo archivo marcó las 10 filas como duplicadas y dejó el botón deshabilitado. Sin errores de consola ni scroll horizontal en 375px.
+
+**Pendiente**: la importación de **PDF** (Santander caja de ahorro, PPI, Balanz) y de MercadoPago. Los parsers están en el historial de git, en el `index.html` anterior a la reescritura.
+
 ## Cuentas archivables (2026-08-27)
 
 El campo `Activo` de `Cuentas` se usa por fin: se puede **archivar** una cuenta que ya no usás sin perder su historial. Es casi todo frontend; el backend sólo cambia un mensaje.

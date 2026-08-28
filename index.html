@@ -13,6 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -191,6 +192,25 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .addrow{display:flex;gap:8px;margin-top:12px}
 .addrow input{flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13.5px;background:#fff;color:var(--ink)}
 
+/* Importación */
+.modal.wide{max-width:940px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:26px 16px;text-align:center;color:var(--muted);cursor:pointer;background:#f8fafc}
+.drop.over{border-color:var(--green);background:var(--green-bg);color:var(--green)}
+.drop .big{font-size:26px;display:block;margin-bottom:6px}
+.tblwrap{border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:46vh;margin-top:10px}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl th{position:sticky;top:0;background:var(--card);text-align:left;color:var(--faint);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;z-index:1}
+.tbl td{padding:6px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.tbl tr.dup td{opacity:.45}
+.tbl td.num{text-align:right;white-space:nowrap;font-weight:600}
+.tbl td.num.pos{color:var(--green-med)}
+.tbl td.num.neg{color:var(--danger)}
+.tbl select{max-width:170px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;font-size:12px;background:#fff;color:var(--ink)}
+.tbl input[type=checkbox]{width:16px;height:16px;accent-color:var(--green)}
+.resumen-meta{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+.resumen-meta .m{background:#f1f5f9;border-radius:9px;padding:7px 11px;font-size:12px;color:var(--muted)}
+.resumen-meta .m b{color:var(--ink);display:block;font-size:13px;margin-top:2px;font-family:'DM Mono',ui-monospace,monospace}
+
 /* Modal */
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:flex;align-items:flex-end;justify-content:center}
 @media(min-width:640px){.overlay{align-items:center;padding:20px}}
@@ -297,6 +317,7 @@ const state = {
   modosPago:  [],
   movimientos: [],
   inversiones: [],
+  reglas:     [],
   mes:      "",                                               // "YYYY-MM" que se está mirando
   grafico:  "Egreso",                                         // qué muestra el gráfico del Resumen
   filtros:  {tipo:"todos", cuenta:"", categoria:"", texto:""},
@@ -360,6 +381,130 @@ function dispDate(v){
   if(!iso) return "—";
   const [y,m,d] = iso.split("-");
   return d + "/" + m + "/" + y;
+}
+
+/* ══════════════════════ REGLAS ══════════════════════ */
+function matchRegla(concepto, r){
+  const d = String(concepto || "").toLowerCase();
+  const p = String(r.patron || "").toLowerCase();
+  if(!p) return false;
+  const t = r.tipoPatron || "contiene";
+  try{
+    if(t === "empieza") return d.startsWith(p);
+    if(t === "igual")   return d === p;
+    if(t === "regex")   return new RegExp(r.patron, "i").test(String(concepto || ""));
+    return d.indexOf(p) >= 0;
+  }catch(e){ return false; }   // regex inválida: no matchea
+}
+
+/** Primera regla activa que matchea, por prioridad. */
+function aplicarReglas(concepto){
+  if(!concepto) return null;
+  const cands = state.reglas
+    .filter(r => r.activo !== false && matchRegla(concepto, r))
+    .sort((a,b) => (+b.prioridad || 0) - (+a.prioridad || 0));
+  return cands.length ? cands[0] : null;
+}
+
+/** Patrón sugerido a partir de un concepto: sin dígitos ni símbolos, dos palabras. */
+function patronDesde(concepto){
+  const limpio = String(concepto || "").toLowerCase()
+    .replace(/[\d*]+/g, " ")
+    .replace(/[^\wáéíóúüñ\s]/gi, " ");
+  return limpio.split(/\s+/).filter(w => w.length > 2).slice(0, 2).join(" ").trim();
+}
+
+/** Clave de deduplicación — tiene que dar igual que `calcHash` del backend. */
+function calcHash(m){
+  return [
+    isoDate(m.fecha),
+    Math.round((+m.monto || 0) * 100),
+    String(m.concepto || "").toLowerCase().slice(0, 40),
+    String(m.cuenta || "")
+  ].join("|");
+}
+
+/* ══════════════════════ PARSER DE RESÚMENES DE TARJETA ══════════════════════ */
+/** Números en formato es-AR: "$ 1.234,56" → 1234.56 (respeta el signo). */
+function parseNum(v){
+  if(v == null || v === "") return null;
+  if(typeof v === "number") return v;
+  let s = String(v).replace(/U\$[SD]?|AR\$|US\$|\$/g, "").replace(/\s| /g, "");
+  const neg = s.indexOf("-") >= 0;
+  s = s.replace(/-/g, "").replace(/\./g, "").replace(/,/g, ".");
+  const n = parseFloat(s);
+  return isNaN(n) ? null : (neg ? -n : n);
+}
+
+/** Período del resumen según la fecha de cierre (cierre a principio de mes ⇒ mes anterior). */
+function periodoDesdeCierre(iso){
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return "";
+  let y = +m[1], mo = +m[2];
+  const d = +m[3];
+  if(d < 15){ mo--; if(mo < 1){ mo = 12; y--; } }
+  return `${y}-${String(mo).padStart(2,"0")}`;
+}
+
+/** "5 de 6" → " (cuota 5/6)" */
+function textoCuotas(c){
+  const s = String(c || "").trim();
+  if(!s) return "";
+  const m = s.match(/(\d+)\s*de\s*(\d+)/i);
+  if(m) return ` (cuota ${m[1]}/${m[2]})`;
+  if(/^\d+\s*\/\s*\d+$/.test(s)) return ` (cuota ${s.replace(/\s/g,"")})`;
+  return "";
+}
+
+/** Amex / Visa de Santander en .xlsx, leídos como array de arrays. */
+function parseTarjeta(aoa){
+  const lineas = [];
+  let inMov = false, inTax = false, lastDate = "";
+  let totalPesos = null, totalUsd = null, cierre = "", venc = "";
+
+  for(let i = 0; i < aoa.length; i++){
+    const r = aoa[i], c0 = String(r[0] || "").trim();
+
+    if(c0 === "Total a pagar"){ const nx = aoa[i+1] || []; totalPesos = parseNum(nx[0]); totalUsd = parseNum(nx[1]); }
+    if(c0 === "Fecha de cierre" && !cierre){ const nx = aoa[i+1] || []; cierre = isoDate(nx[0]); venc = isoDate(nx[1]); }
+    if(!cierre){ const mc = c0.match(/Cierre:\s*(\d{2}\/\d{2}\/\d{4})/); if(mc) cierre = isoDate(mc[1]); }
+    if(!venc){   const mv = c0.match(/Vencimiento:\s*(\d{2}\/\d{2}\/\d{4})/); if(mv) venc = isoDate(mv[1]); }
+
+    if(c0.startsWith("Fecha") && String(r[1] || "").startsWith("Descrip")){ inMov = true; inTax = false; continue; }
+    if(c0.startsWith("Total de ")){ inMov = false; continue; }
+    if(c0.startsWith("Otros conceptos")){ inMov = false; inTax = true; continue; }
+    if(c0.startsWith("Aviso")) break;
+
+    if(inMov){
+      const isDate = /^\d{2}\/\d{2}\/\d{4}$/.test(c0);
+      const fecha = isDate ? c0 : lastDate;      // la fecha se arrastra entre líneas
+      if(isDate) lastDate = c0;
+      const desc = String(r[1] || "").trim();
+      if(!desc) continue;
+      const cuotas = String(r[2] || "").trim();
+      const ars = parseNum(r[4]), usd = parseNum(r[5]);
+      const moneda  = usd != null ? "USD" : "ARS";
+      const importe = usd != null ? usd : ars;
+      if(importe == null) continue;
+      lineas.push({ fechaIso:isoDate(fecha), desc, cuotas, moneda, importe });
+    }else if(inTax){
+      if(/^Descripci/.test(c0)) continue;
+      const monto = parseNum(r[1]);
+      if(monto == null) continue;
+      lineas.push({ fechaIso:cierre, desc:c0, cuotas:"", moneda:"ARS", importe:Math.abs(monto), impuesto:true });
+    }
+  }
+  return { lineas, meta:{ totalPesos, totalUsd, cierreIso:cierre, vencIso:venc, periodo:periodoDesdeCierre(cierre) } };
+}
+
+/** Emisor y número de tarjeta, por el texto de las primeras filas. */
+function detectarEmisor(aoa){
+  const texto = aoa.slice(0, 25).map(r => r.join(" ")).join(" ").toLowerCase();
+  let emisor = "Tarjeta";
+  if(texto.includes("american express")) emisor = "Amex";
+  else if(texto.includes("visa")) emisor = "Visa";
+  const m = texto.match(/terminada en\s*(\d{3,4})/);
+  return { emisor, numero: m ? m[1] : "" };
 }
 
 /* ══════════════════════ COTIZACIÓN ══════════════════════ */
@@ -611,6 +756,7 @@ async function bootstrap(silent){
     state.modosPago   = (d.modosPago || []).filter(m => m.activo !== false);
     state.movimientos = ordenarMovs((d.movimientos || []).map(m => ({...m, fecha:isoDate(m.fecha)})));
     state.inversiones = (d.inversiones || []).map(i => ({...i, fecha:isoDate(i.fecha)}));
+    state.reglas      = (d.reglas || []).filter(r => r.activo !== false);
     state.config      = d.config || {};
     state.conectado = true;
     if(!silent){ const n = cuentasActivas().length; toast("Conectado · " + n + (n === 1 ? " cuenta" : " cuentas")); }
@@ -1210,6 +1356,342 @@ function cardComposicion(titulo, filasTodas){
   </div>`;
 }
 
+/* ══════════════════════ IMPORTACIÓN DE RESÚMENES ══════════════════════ */
+function modalImportar(){
+  const est = { datos:null, filas:[], periodo:"", cuentaArs:"", cuentaUsd:"", archivo:"", crearReglas:true };
+
+  $("#modalRoot").innerHTML = `<div class="overlay" id="ovImp"><div class="modal wide" id="impBody"></div></div>`;
+  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
+  $("#ovImp").onclick = e => { if(e.target.id === "ovImp") cerrar(); };
+
+  /* ── Paso 1: archivo ── */
+  function vistaArchivo(){
+    return `
+      <button class="close" id="mClose">×</button>
+      <h3>Importar resumen de tarjeta</h3>
+      <p class="hint">Excel (<b>.xlsx</b>) del resumen de Amex o Visa. El archivo se lee en tu navegador: no se sube a ningún lado.</p>
+      <div class="drop" id="dropZone">
+        <span class="big">⬆</span>
+        Arrastrá el archivo acá o tocá para elegirlo
+      </div>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" class="hidden">
+      <p class="hint" style="margin-top:14px">Los PDF de banco y broker todavía no: por ahora sólo resúmenes de tarjeta en Excel.</p>`;
+  }
+
+  function bindArchivo(){
+    $("#mClose").onclick = cerrar;
+    const zona = $("#dropZone"), input = $("#fileInput");
+    zona.onclick = () => input.click();
+    input.onchange = () => { if(input.files[0]) leerArchivo(input.files[0]); };
+    zona.ondragover = e => { e.preventDefault(); zona.classList.add("over"); };
+    zona.ondragleave = () => zona.classList.remove("over");
+    zona.ondrop = e => {
+      e.preventDefault(); zona.classList.remove("over");
+      const f = e.dataTransfer.files[0];
+      if(f) leerArchivo(f);
+    };
+  }
+
+  async function leerArchivo(file){
+    if(typeof XLSX === "undefined"){ toast("El lector de Excel todavía está cargando, probá en un segundo"); return; }
+    try{
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, {type:"array"});
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const aoa = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:""});
+      const { lineas, meta } = parseTarjeta(aoa);
+      if(!lineas.length){ toast("No encontré consumos en ese archivo"); return; }
+      const info = detectarEmisor(aoa);
+      est.datos   = { ...info, lineas, meta };
+      est.archivo = file.name;
+      est.periodo = meta.periodo || mesActual();
+      elegirCuentas();
+      construirFilas();
+      pintar();
+    }catch(e){ toast("No pude leer el archivo: " + e.message); }
+  }
+
+  /* Autocompleta las cuentas de la tarjeta: por número, por emisor, o la primera del tipo. */
+  function elegirCuentas(){
+    const tarjetas = cuentasActivas().filter(c => c.tipo === "tarjeta");
+    const buscar = mon => {
+      const cand = tarjetas.filter(c => c.moneda === mon);
+      const porNumero = est.datos.numero ? cand.find(c => c.nombre.includes(est.datos.numero)) : null;
+      const porEmisor = cand.find(c => c.nombre.toLowerCase().includes(est.datos.emisor.toLowerCase()));
+      return ((porNumero || porEmisor || cand[0]) || {}).id || "";
+    };
+    est.cuentaArs = buscar("ARS");
+    est.cuentaUsd = buscar("USD");
+  }
+
+  function construirFilas(){
+    est.filas = est.datos.lineas.map((l, i) => {
+      const concepto = l.desc + textoCuotas(l.cuotas);
+      const regla = aplicarReglas(concepto);
+      return {
+        i, fecha:l.fechaIso, concepto, moneda:l.moneda,
+        monto: Math.abs(l.importe),
+        tipo: l.importe < 0 ? "Ingreso" : "Egreso",   // negativo = pago o devolución
+        esPago: l.importe < 0,
+        esImpuesto: !!l.impuesto,
+        categoria: (regla && regla.categoria) || "",
+        reglaId: regla ? regla.id : "",
+        categoriaManual: false,
+        sel: true
+      };
+    });
+    revisarDuplicados();
+  }
+
+  /** Recalcula el hash con la cuenta elegida y marca lo que ya está cargado. */
+  function revisarDuplicados(){
+    const existentes = new Set(state.movimientos.map(m => m.hash || calcHash(m)));
+    for(const f of est.filas){
+      f.cuenta = f.moneda === "USD" ? est.cuentaUsd : est.cuentaArs;
+      f.hash = calcHash({fecha:f.fecha, monto:f.monto, concepto:f.concepto, cuenta:f.cuenta});
+      f.dup = existentes.has(f.hash);
+      if(f.dup) f.sel = false;
+    }
+  }
+
+  /* ── Paso 2: mapeo + preview ── */
+  function optCuentasTarjeta(mon, sel){
+    const cand = cuentasActivas().filter(c => c.moneda === mon);
+    return `<option value="">— elegir cuenta ${mon} —</option>` + cand.map(c =>
+      `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)}${c.tipo === "tarjeta" ? "" : " · " + tipoInfo(c.tipo).l}</option>`).join("");
+  }
+
+  function vistaPreview(){
+    const { meta } = est.datos;
+    const hayUsd = est.filas.some(f => f.moneda === "USD");
+    const dups   = est.filas.filter(f => f.dup).length;
+    const aImportar = est.filas.filter(f => f.sel && !f.dup).length;
+    const manuales  = est.filas.filter(f => f.categoriaManual && f.categoria && f.sel && !f.dup).length;
+
+    // Conciliación informativa contra el total del resumen
+    const sumaArs = est.datos.lineas.filter(l => l.moneda === "ARS").reduce((a,l) => a + l.importe, 0);
+    const sumaUsd = est.datos.lineas.filter(l => l.moneda === "USD").reduce((a,l) => a + l.importe, 0);
+    const difArs = meta.totalPesos != null ? Math.abs(sumaArs - meta.totalPesos) : 0;
+    const difUsd = meta.totalUsd  != null ? Math.abs(sumaUsd - meta.totalUsd)  : 0;
+    const concilia = difArs < 1 && difUsd < 0.05;
+
+    const filasHtml = est.filas.map(f => {
+      const cats = catsPara(f.tipo);
+      const opts = `<option value="">Sin categoría</option>` + cats.map(c =>
+        `<option value="${esc(c.id)}" ${f.categoria === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("");
+      const chip = f.esImpuesto ? `<span class="tag">impuesto</span>` : (f.esPago ? `<span class="tag ok">pago</span>` : "");
+      return `
+      <tr class="${f.dup ? "dup" : ""}">
+        <td><input type="checkbox" data-sel="${f.i}" ${f.sel ? "checked" : ""} ${f.dup ? "disabled" : ""}></td>
+        <td>${dispDate(f.fecha)}</td>
+        <td>${esc(f.concepto)} ${chip}${f.dup ? ` <span class="tag off">ya está</span>` : ""}</td>
+        <td class="num ${f.esPago ? "pos" : "neg"}">${f.esPago ? "+" : "−"}${fmt(f.monto, f.moneda)}</td>
+        <td><span class="tag ${f.moneda === "USD" ? "usd" : ""}">${f.moneda}</span></td>
+        <td><select data-cat="${f.i}">${opts}</select></td>
+      </tr>`;
+    }).join("");
+
+    return `
+      <button class="close" id="mClose">×</button>
+      <h3>${esc(est.datos.emisor)}${est.datos.numero ? " ·· " + esc(est.datos.numero) : ""}</h3>
+      <p class="hint">${esc(est.archivo)} · ${est.datos.lineas.length} líneas detectadas</p>
+
+      <div class="resumen-meta">
+        ${meta.totalPesos != null ? `<span class="m">Total a pagar<b>${fmt(meta.totalPesos, "ARS")}</b></span>` : ""}
+        ${meta.totalUsd ? `<span class="m">En dólares<b>${fmt(meta.totalUsd, "USD")}</b></span>` : ""}
+        ${meta.cierreIso ? `<span class="m">Cierre<b>${dispDate(meta.cierreIso)}</b></span>` : ""}
+        ${meta.vencIso ? `<span class="m">Vencimiento<b>${dispDate(meta.vencIso)}</b></span>` : ""}
+      </div>
+      ${meta.totalPesos != null ? `<p class="hint" style="margin:2px 0 10px">${concilia
+        ? "✓ Las líneas suman exactamente el total del resumen."
+        : `Las líneas suman ${fmt(sumaArs, "ARS")}${meta.totalUsd ? " / " + fmt(sumaUsd, "USD") : ""} contra el total del resumen. Revisá antes de confirmar.`}</p>` : ""}
+
+      <div class="row2">
+        <div>
+          <label class="f" for="impCuentaArs">Cuenta de la tarjeta (pesos)</label>
+          <select class="f" id="impCuentaArs">${optCuentasTarjeta("ARS", est.cuentaArs)}</select>
+        </div>
+        <div>
+          <label class="f" for="impPeriodo">Período del resumen</label>
+          <input class="f" id="impPeriodo" type="month" value="${esc(est.periodo)}">
+        </div>
+      </div>
+      ${hayUsd ? `
+      <label class="f" for="impCuentaUsd">Cuenta de la tarjeta (dólares)</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="f" id="impCuentaUsd">${optCuentasTarjeta("USD", est.cuentaUsd)}</select>
+        ${!est.cuentaUsd ? `<button class="btn ghost sm" id="btnCrearUsd" style="flex-shrink:0;white-space:nowrap">Crear cuenta USD</button>` : ""}
+      </div>` : ""}
+
+      <div class="tblwrap">
+        <table class="tbl">
+          <thead><tr>
+            <th><input type="checkbox" id="selTodos" ${aImportar && aImportar === est.filas.filter(f => !f.dup).length ? "checked" : ""}></th>
+            <th>Fecha</th><th>Concepto</th><th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría</th>
+          </tr></thead>
+          <tbody>${filasHtml}</tbody>
+        </table>
+      </div>
+
+      <p class="hint" style="margin:10px 0 0">${aImportar} de ${est.filas.length} para importar${dups ? ` · ${dups} ya estaban cargadas` : ""}.</p>
+      ${manuales ? `<label class="check"><input type="checkbox" id="impCrearReglas" ${est.crearReglas ? "checked" : ""}> Crear reglas para las ${manuales} categorías que asigné a mano</label>` : ""}
+
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn primary block" id="btnImportar" ${aImportar ? "" : "disabled"}>Importar ${aImportar} movimiento${aImportar === 1 ? "" : "s"}</button>
+      </div>`;
+  }
+
+  function bindPreview(){
+    $("#mClose").onclick = cerrar;
+
+    $("#impCuentaArs").onchange = e => { est.cuentaArs = e.target.value; revisarDuplicados(); pintar(); };
+    const selUsd = $("#impCuentaUsd");
+    if(selUsd) selUsd.onchange = e => { est.cuentaUsd = e.target.value; revisarDuplicados(); pintar(); };
+    $("#impPeriodo").onchange = e => { est.periodo = e.target.value; };
+
+    const btnUsd = $("#btnCrearUsd");
+    if(btnUsd) btnUsd.onclick = ev => crearCuentaUsd(ev.currentTarget);
+
+    $("#selTodos").onchange = e => {
+      est.filas.forEach(f => { if(!f.dup) f.sel = e.target.checked; });
+      pintar();
+    };
+    $$("[data-sel]").forEach(ch => ch.onchange = () => {
+      const f = est.filas[+ch.dataset.sel];
+      f.sel = ch.checked;
+      pintar();
+    });
+    $$("[data-cat]").forEach(sel => sel.onchange = () => {
+      const f = est.filas[+sel.dataset.cat];
+      f.categoria = sel.value;
+      f.categoriaManual = true;
+      pintar();
+    });
+    const chkReglas = $("#impCrearReglas");
+    if(chkReglas) chkReglas.onchange = e => { est.crearReglas = e.target.checked; };
+
+    $("#btnImportar").onclick = ev => confirmar(ev.currentTarget);
+  }
+
+  async function crearCuentaUsd(btn){
+    const nombre = `${est.datos.emisor}${est.datos.numero ? " " + est.datos.numero : ""} USD`;
+    const cuenta = {
+      id: uid(), nombre, tipo:"tarjeta", moneda:"USD",
+      saldoInicial: 0, fechaInicial: todayIso(),
+      enPatrimonio: false, orden: 0, activo: true
+    };
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = "Creando…";
+    try{
+      await api({action:"saveCuenta", cuenta});
+      state.cuentas.push(cuenta);
+      state.cuentas = ordenarCuentas(state.cuentas);
+      est.cuentaUsd = cuenta.id;
+      revisarDuplicados();
+      pintar();
+      toast(`Cuenta "${nombre}" creada`);
+    }catch(e){
+      toast(e.message);
+      btn.disabled = false; btn.textContent = prev;
+    }
+  }
+
+  async function confirmar(btn){
+    const sel = est.filas.filter(f => f.sel && !f.dup);
+    if(!sel.length){ toast("No hay filas para importar"); return; }
+    if(sel.some(f => !f.cuenta)){
+      toast(sel.some(f => f.moneda === "USD" && !f.cuenta) ? "Falta elegir la cuenta en dólares" : "Falta elegir la cuenta de la tarjeta");
+      return;
+    }
+    btn.disabled = true; btn.textContent = "Guardando…";
+    try{
+      const meta = est.datos.meta;
+      const obs  = `Resumen ${est.periodo}` + (meta.vencIso ? ` · vence ${dispDate(meta.vencIso)}` : "");
+      const modoCredito = (state.modosPago.find(m => /cr[eé]dito/i.test(m.nombre)) || {}).nombre || "";
+
+      // Cotizaciones: una consulta por fecha distinta, todas en paralelo
+      const cots = {};
+      await Promise.all([...new Set(sel.map(f => f.fecha))].map(async fecha => {
+        cots[fecha] = (await mepDe(fecha)) || rate();
+      }));
+
+      const movimientos = [];
+      for(const f of sel){
+        const cot = cots[f.fecha];
+        movimientos.push({
+          id: uid(), mes: mesDe(f.fecha), fecha: f.fecha, tipo: f.tipo,
+          categoria: f.categoria, concepto: f.concepto,
+          cuenta: f.cuenta, cuentaDestino: "",
+          moneda: f.moneda, monto: f.monto,
+          monedaDestino: "", montoDestino: null,
+          cotizacion: cot || null, modoPago: modoCredito, observacion: obs,
+          timestamp: "", hash: f.hash, fuente: "import"
+        });
+      }
+
+      const res = await api({action:"saveMovimientos", movimientos});
+
+      // Reflejamos localmente lo que el backend efectivamente guardó
+      const yaEstaban = new Set(state.movimientos.map(m => m.hash || calcHash(m)));
+      movimientos.forEach(m => {
+        if(!yaEstaban.has(m.hash)){
+          yaEstaban.add(m.hash);
+          state.movimientos.push({...m, timestamp: ahoraLocal()});
+        }
+      });
+      state.movimientos = ordenarMovs(state.movimientos);
+      if(sel.length) state.mes = mesDe(sel[0].fecha);
+
+      await actualizarReglas(sel);
+
+      cerrar();
+      render();
+      toast(`Importados ${res.guardados}${res.omitidos ? ` · ${res.omitidos} ya estaban` : ""}`);
+    }catch(e){
+      toast(e.message);
+      btn.disabled = false; btn.textContent = "Reintentar importación";
+    }
+  }
+
+  /** Suma hits a las reglas que se aplicaron y crea las nuevas que pidió el usuario. */
+  async function actualizarReglas(filas){
+    const cambios = [];
+
+    const hits = {};
+    filas.forEach(f => { if(f.reglaId && !f.categoriaManual) hits[f.reglaId] = (hits[f.reglaId] || 0) + 1; });
+    Object.keys(hits).forEach(id => {
+      const r = state.reglas.find(x => x.id === id);
+      if(r) cambios.push({...r, hits:(+r.hits || 0) + hits[id]});
+    });
+
+    if(est.crearReglas){
+      const vistos = new Set();
+      for(const f of filas){
+        if(!f.categoriaManual || !f.categoria) continue;
+        const patron = patronDesde(f.concepto);
+        if(!patron) continue;
+        const clave = patron + "|" + f.categoria;
+        if(vistos.has(clave)) continue;
+        vistos.add(clave);
+        if(state.reglas.some(r => r.patron.toLowerCase() === patron && r.categoria === f.categoria)) continue;
+        cambios.push({id:uid(), patron, tipoPatron:"contiene", categoria:f.categoria, tipo:"", prioridad:10, hits:0, activo:true});
+      }
+    }
+
+    if(!cambios.length) return;
+    try{
+      const d = await api({action:"saveReglas", reglas:cambios});
+      state.reglas = (d.reglas || []).filter(r => r.activo !== false);
+    }catch(e){ /* las reglas son secundarias: no rompemos la importación */ }
+  }
+
+  function pintar(){
+    $("#impBody").innerHTML = est.datos ? vistaPreview() : vistaArchivo();
+    if(est.datos) bindPreview(); else bindArchivo();
+  }
+  pintar();
+}
+
 /* ══════════════════════ MOVIMIENTOS ══════════════════════ */
 function movsVisibles(){
   const f = state.filtros;
@@ -1242,6 +1724,7 @@ function viewMovimientos(){
 
   const f = state.filtros;
   const movs = movsVisibles();
+  const sinCategoria = state.movimientos.filter(m => !m.categoria && m.tipo !== "Interno").length;
   const total = state.movimientos.filter(m => mesDe(m.fecha) === state.mes).length;
 
   const pills = ["todos"].concat(TIPOS_MOV).map(t =>
@@ -1269,6 +1752,10 @@ function viewMovimientos(){
 
   return `
     <h2 class="tab-title">Movimientos</h2>
+    <div class="btn-row" style="margin:0 0 12px">
+      <button class="btn ghost sm" id="btnImportarResumen">⬆ Importar resumen</button>
+      ${sinCategoria ? `<button class="btn ghost sm" id="btnAplicarReglas">✨ Aplicar reglas a ${sinCategoria} sin categoría</button>` : ""}
+    </div>
     <div class="mesnav">
       <button data-mes="-1" title="Mes anterior">‹</button>
       <span class="m">${mesLabel(state.mes)}</span>
@@ -1389,6 +1876,51 @@ function bindMovimientos(){
   $$("[data-mov]").forEach(b => b.onclick = () => modalMovimiento(b.dataset.mov));
   const fab = $("#fabNuevo");
   if(fab) fab.onclick = () => modalMovimiento(null);
+  const imp = $("#btnImportarResumen");
+  if(imp) imp.onclick = () => modalImportar();
+  const apl = $("#btnAplicarReglas");
+  if(apl) apl.onclick = ev => aplicarReglasPendientes(ev.currentTarget);
+}
+
+/** Corre las reglas sobre los movimientos sin categoría y guarda los que cambian. */
+async function aplicarReglasPendientes(btn){
+  const pendientes = state.movimientos.filter(m => !m.categoria && m.tipo !== "Interno");
+  const cambios = [], hits = {};
+  for(const m of pendientes){
+    const r = aplicarReglas(m.concepto);
+    if(!r || !r.categoria) continue;
+    cambios.push({...m, categoria:r.categoria, tipo:r.tipo || m.tipo});
+    hits[r.id] = (hits[r.id] || 0) + 1;
+  }
+  if(!cambios.length){ toast("Ninguna regla aplica a los movimientos sin categoría"); return; }
+
+  const prev = btn.textContent;
+  btn.disabled = true;
+  let ok = 0;
+  for(const mov of cambios){
+    btn.textContent = `Aplicando… ${ok + 1}/${cambios.length}`;
+    try{
+      await api({action:"saveMovimiento", mov:{...mov, hash:""}});
+      const i = state.movimientos.findIndex(x => x.id === mov.id);
+      if(i >= 0) state.movimientos[i] = mov;
+      ok++;
+    }catch(e){ toast(e.message); break; }
+  }
+
+  const actualizadas = Object.keys(hits).map(id => {
+    const r = state.reglas.find(x => x.id === id);
+    return r ? {...r, hits:(+r.hits || 0) + hits[id]} : null;
+  }).filter(Boolean);
+  if(actualizadas.length){
+    try{
+      const d = await api({action:"saveReglas", reglas:actualizadas});
+      state.reglas = (d.reglas || []).filter(r => r.activo !== false);
+    }catch(e){ /* secundario */ }
+  }
+
+  btn.disabled = false; btn.textContent = prev;
+  render();
+  toast(`${ok} ${ok === 1 ? "movimiento categorizado" : "movimientos categorizados"}`);
 }
 
 /* ── Alta / edición de movimiento ── */
@@ -1450,6 +1982,7 @@ function modalMovimiento(id){
       <div id="bloqueCategoria">
         <label class="f" for="mCategoria">Categoría</label>
         <select class="f" id="mCategoria"></select>
+        <div id="bloqueRegla"></div>
       </div>
 
       <label class="f" for="mConcepto">Concepto</label>
@@ -1499,7 +2032,8 @@ function modalMovimiento(id){
       const sel = $("#mCategoria").value || (m ? m.categoria : "");
       const cats = catsPara(tipo);
       $("#mCategoria").innerHTML = cats.length
-        ? cats.map(c => `<option value="${esc(c.id)}" ${sel===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("")
+        ? `<option value="">— elegí una categoría —</option>` +
+          cats.map(c => `<option value="${esc(c.id)}" ${sel===c.id?"selected":""}>${esc(c.nombre)}</option>`).join("")
         : `<option value="">(no hay categorías — creá una en Ajustes)</option>`;
     }
 
@@ -1524,6 +2058,7 @@ function modalMovimiento(id){
         if(destId && destId === cuentaId) { info.classList.remove("hidden"); info.textContent = "La cuenta destino tiene que ser distinta de la de origen."; }
       }
     }
+    refrescarRegla();
   }
 
   // La cotización se autocompleta con el MEP del día del movimiento, salvo que la toques.
@@ -1547,6 +2082,33 @@ function modalMovimiento(id){
     const el = $(sel);
     if(el){ el.onchange = sync; el.oninput = sync; }
   });
+
+  /* Reglas: sugerir la categoría por el concepto y ofrecer crear la regla */
+  function sugerirCategoria(){
+    if(tipo === "Interno") return;
+    const cat = $("#mCategoria");
+    if(!cat || cat.value) return;                       // no pisamos lo que ya elegiste
+    const r = aplicarReglas($("#mConcepto").value);
+    if(r && r.categoria && Array.from(cat.options).some(o => o.value === r.categoria)) cat.value = r.categoria;
+  }
+  function refrescarRegla(){
+    const cont = $("#bloqueRegla");
+    if(!cont) return;
+    const concepto = $("#mConcepto").value.trim();
+    const cat = $("#mCategoria") ? $("#mCategoria").value : "";
+    if(tipo === "Interno" || !concepto || !cat){ cont.innerHTML = ""; return; }
+    const r = aplicarReglas(concepto);
+    if(r && r.categoria === cat){
+      cont.innerHTML = `<p class="hint" style="margin:6px 0 0">✨ Categoría sugerida por la regla «${esc(r.patron)}».</p>`;
+      return;
+    }
+    const patron = patronDesde(concepto);
+    if(!patron){ cont.innerHTML = ""; return; }
+    cont.innerHTML = `<label class="check" style="margin:8px 0 0;font-size:13px"><input type="checkbox" id="mCrearRegla"> Crear regla: «${esc(patron)}» → ${esc((catPorId(cat) || {}).nombre || "")}</label>`;
+  }
+  $("#mConcepto").oninput = () => { sugerirCategoria(); refrescarRegla(); };
+  $("#mCategoria").onchange = refrescarRegla;
+
   sync();
   setTimeout(() => { const el = $("#mMonto"); if(el) el.focus(); }, 50);
 
@@ -1585,13 +2147,19 @@ function modalMovimiento(id){
       modoPago: $("#mModoPago").value,
       observacion: $("#mObservacion").value.trim(),
       // El sello de tiempo lo pone el backend en hora argentina; al editar se conserva.
-      timestamp: (m && m.timestamp) || ""
+      timestamp: (m && m.timestamp) || "",
+      hash: "",                                  // lo recalcula el backend con los valores nuevos
+      fuente: (m && m.fuente) || "manual"
     };
+
+    const chkRegla = $("#mCrearRegla");
+    const crearRegla = !!(chkRegla && chkRegla.checked);
 
     b.disabled = true; b.textContent = "Guardando…";
     try{
       const res = await api({action:"saveMovimiento", mov});
       mov.timestamp = res.timestamp || mov.timestamp || ahoraLocal();
+      mov.hash = calcHash(mov);
       const i = state.movimientos.findIndex(x => x.id === mov.id);
       if(i >= 0) state.movimientos[i] = mov; else state.movimientos.push(mov);
       state.movimientos = ordenarMovs(state.movimientos);
@@ -1599,6 +2167,7 @@ function modalMovimiento(id){
       cerrar();
       render();
       toast(m ? "Movimiento actualizado" : "Movimiento guardado");
+      if(crearRegla) await crearReglaDesde(concepto, categoria);
     }catch(e){
       toast(e.message);
       b.disabled = false; b.textContent = "Guardar";
@@ -1631,7 +2200,8 @@ function viewAjustes(){
     ${cardCotizacion()}
     ${cardCuentas()}
     ${cardCategorias()}
-    ${cardModosPago()}`;
+    ${cardModosPago()}
+    ${cardReglas()}`;
 }
 
 function cardConexion(){
@@ -1991,6 +2561,207 @@ async function cargarSugeridos(que, btn){
   }
 }
 
+/* ── ABM Reglas ── */
+const TIPOS_PATRON = [
+  {v:"contiene", l:"contiene"},
+  {v:"empieza",  l:"empieza con"},
+  {v:"igual",    l:"es igual a"},
+  {v:"regex",    l:"regex"}
+];
+
+const REGLAS_SUGERIDAS = [
+  {categoria:"Suscripciones", aplica:"gasto", color:"#7c3aed",
+   patrones:["netflix","spotify","youtube","claude","anthropic","openai","disney","hbo","google one","prime video","apple.com"]},
+  {categoria:"Pago de tarjeta", aplica:"ambos", color:"#198754", patrones:["su pago"]},
+  {categoria:"Impuestos y sellos", aplica:"gasto", color:"#64748b",
+   patrones:["iva","percepcion","percepción","sellos","ley 25.413"]}
+];
+
+function cardReglas(){
+  let cuerpo;
+  if(!state.conectado){
+    cuerpo = `<div class="empty"><div class="t">Sin conexión</div><div class="s">Conectá tu backend para administrar reglas.</div></div>`;
+  }else if(!state.reglas.length){
+    cuerpo = `<div class="empty">
+      <div class="big">✨</div>
+      <div class="t">Todavía no hay reglas</div>
+      <div class="s">Una regla mira el concepto y asigna la categoría sola: ideal para lo que se repite todos los meses (Netflix, Spotify, el sueldo…).</div>
+      <div class="btn-row" style="justify-content:center"><button class="btn ghost sm" id="btnSeedReglas">Cargar sugeridas</button></div>
+    </div>`;
+  }else{
+    cuerpo = state.reglas.map(r => {
+      const cat = catPorId(r.categoria);
+      const tp  = (TIPOS_PATRON.find(t => t.v === r.tipoPatron) || TIPOS_PATRON[0]).l;
+      return `<div class="item">
+        <span class="swatch" style="background:${esc(cat ? cat.color : COLOR_DEFAULT)}"></span>
+        <span class="nm">«${esc(r.patron)}»<span style="color:var(--faint);font-weight:400"> ${esc(tp)} → ${esc(cat ? cat.nombre : (r.tipo || "sin categoría"))}</span></span>
+        ${r.hits ? `<span class="tag">${r.hits}×</span>` : ""}
+        <span class="tag">p${r.prioridad || 0}</span>
+        <span class="acts">
+          <button data-editregla="${esc(r.id)}" title="Editar">✏️</button>
+          <button data-delregla="${esc(r.id)}" title="Borrar">🗑️</button>
+        </span>
+      </div>`;
+    }).join("");
+  }
+  return `
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h3>Reglas de categorización</h3>
+        <p class="hint" style="margin-bottom:0">Se aplican al importar resúmenes y al escribir el concepto en la carga manual.</p>
+      </div>
+      <button class="btn primary sm" id="btnNuevaRegla" ${state.conectado ? "" : "disabled"} style="flex-shrink:0">＋ Nueva</button>
+    </div>
+    <div style="margin-top:10px">${cuerpo}</div>
+  </div>`;
+}
+
+function modalRegla(id){
+  const r = id ? state.reglas.find(x => x.id === id) : null;
+  const cats = state.categorias;
+  $("#modalRoot").innerHTML = `
+  <div class="overlay" id="ovRegla">
+    <div class="modal">
+      <button class="close" id="mClose">×</button>
+      <h3>${r ? "Editar regla" : "Nueva regla"}</h3>
+      <p class="hint">Si el concepto del movimiento coincide con el patrón, se le asigna esta categoría.</p>
+
+      <div class="row2">
+        <div>
+          <label class="f" for="gTipoPatron">El concepto…</label>
+          <select class="f" id="gTipoPatron">
+            ${TIPOS_PATRON.map(t => `<option value="${t.v}" ${r && r.tipoPatron === t.v ? "selected" : ""}>${t.l}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="f" for="gPatron">Patrón</label>
+          <input class="f" id="gPatron" placeholder="netflix" autocomplete="off" value="${r ? esc(r.patron) : ""}">
+        </div>
+      </div>
+
+      <label class="f" for="gCategoria">Categoría a asignar</label>
+      <select class="f" id="gCategoria">
+        <option value="">— ninguna —</option>
+        ${cats.map(c => `<option value="${esc(c.id)}" ${r && r.categoria === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}
+      </select>
+
+      <div class="row2">
+        <div>
+          <label class="f" for="gTipo">Forzar tipo (opcional)</label>
+          <select class="f" id="gTipo">
+            <option value="">— no forzar —</option>
+            ${TIPOS_MOV.map(t => `<option value="${t}" ${r && r.tipo === t ? "selected" : ""}>${t}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="f" for="gPrioridad">Prioridad</label>
+          <input class="f num" id="gPrioridad" type="number" step="1" value="${r ? esc(r.prioridad || 0) : "10"}">
+        </div>
+      </div>
+      <p class="hint" style="margin:6px 0 0">Ante varias reglas que coinciden, gana la de prioridad más alta.</p>
+
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn primary block" id="mGuardar">Guardar</button>
+      </div>
+    </div>
+  </div>`;
+
+  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
+  $("#mClose").onclick = cerrar;
+  $("#ovRegla").onclick = e => { if(e.target.id === "ovRegla") cerrar(); };
+  setTimeout(() => { const el = $("#gPatron"); if(el) el.focus(); }, 50);
+
+  $("#mGuardar").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    const patron = $("#gPatron").value.trim();
+    if(!patron){ toast("La regla necesita un patrón"); $("#gPatron").focus(); return; }
+    const categoria = $("#gCategoria").value, tipo = $("#gTipo").value;
+    if(!categoria && !tipo){ toast("Elegí una categoría (o un tipo a forzar)"); return; }
+    if($("#gTipoPatron").value === "regex"){
+      try{ new RegExp(patron); }catch(e){ toast("Esa expresión regular no es válida"); return; }
+    }
+    const regla = {
+      id: r ? r.id : uid(),
+      patron, tipoPatron: $("#gTipoPatron").value,
+      categoria, tipo,
+      prioridad: parseInt($("#gPrioridad").value, 10) || 0,
+      hits: r ? r.hits : 0,
+      activo: true
+    };
+    b.disabled = true; b.textContent = "Guardando…";
+    try{
+      await api({action:"saveRegla", regla});
+      const i = state.reglas.findIndex(x => x.id === regla.id);
+      if(i >= 0) state.reglas[i] = regla; else state.reglas.push(regla);
+      state.reglas.sort((a,z) => ((+z.prioridad||0)-(+a.prioridad||0)) || a.patron.localeCompare(z.patron, "es"));
+      cerrar(); render();
+      toast(r ? "Regla actualizada" : "Regla creada");
+    }catch(e){
+      toast(e.message);
+      b.disabled = false; b.textContent = "Guardar";
+    }
+  };
+}
+
+async function borrarRegla(id){
+  const r = state.reglas.find(x => x.id === id);
+  if(!r || !confirm(`¿Borrar la regla «${r.patron}»?`)) return;
+  try{
+    await api({action:"deleteRegla", id});
+    state.reglas = state.reglas.filter(x => x.id !== id);
+    render(); toast("Regla borrada");
+  }catch(e){ toast(e.message); }
+}
+
+/** Crea una regla a partir de un movimiento recién categorizado. */
+async function crearReglaDesde(concepto, categoria){
+  const patron = patronDesde(concepto);
+  if(!patron || !categoria) return;
+  if(state.reglas.some(r => r.patron.toLowerCase() === patron && r.categoria === categoria)) return;
+  const regla = {id:uid(), patron, tipoPatron:"contiene", categoria, tipo:"", prioridad:10, hits:0, activo:true};
+  try{
+    await api({action:"saveRegla", regla});
+    state.reglas.push(regla);
+    toast(`Regla creada: «${patron}»`);
+  }catch(e){ toast(e.message); }
+}
+
+/** Set inicial de reglas, creando las categorías que falten. */
+async function cargarReglasSugeridas(btn){
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = "Cargando…";
+  try{
+    const idPorNombre = {}, catsNuevas = [];
+    for(const g of REGLAS_SUGERIDAS){
+      const existente = state.categorias.find(c => c.nombre.toLowerCase() === g.categoria.toLowerCase());
+      if(existente){ idPorNombre[g.categoria] = existente.id; continue; }
+      const cat = {id:uid(), nombre:g.categoria, aplica:g.aplica, color:g.color, orden:50, activo:true};
+      catsNuevas.push(cat);
+      idPorNombre[g.categoria] = cat.id;
+    }
+    if(catsNuevas.length){
+      const d = await api({action:"saveCategorias", categorias:catsNuevas});
+      state.categorias = (d.categorias || state.categorias.concat(catsNuevas)).filter(c => c.activo !== false);
+    }
+    const reglas = [];
+    for(const g of REGLAS_SUGERIDAS){
+      for(const p of g.patrones){
+        if(state.reglas.some(r => r.patron.toLowerCase() === p)) continue;
+        reglas.push({id:uid(), patron:p, tipoPatron:"contiene", categoria:idPorNombre[g.categoria], tipo:"", prioridad:10, hits:0, activo:true});
+      }
+    }
+    if(!reglas.length){ toast("Ya tenés todas las reglas sugeridas"); btn.disabled = false; btn.textContent = prev; return; }
+    const d = await api({action:"saveReglas", reglas});
+    state.reglas = (d.reglas || []).filter(r => r.activo !== false);
+    render();
+    toast(`${reglas.length} reglas cargadas`);
+  }catch(e){
+    toast(e.message);
+    btn.disabled = false; btn.textContent = prev;
+  }
+}
+
 function bindAjustes(){
   const url = $("#cfgUrl");
   const tok = $("#cfgToken");
@@ -2058,6 +2829,13 @@ function bindAjustes(){
 
   $$("[data-editmodo]").forEach(b => b.onclick = () => modalModoPago(b.dataset.editmodo));
   $$("[data-delmodo]").forEach(b => b.onclick = () => borrarModoPago(b.dataset.delmodo));
+  const nuevaRegla = $("#btnNuevaRegla");
+  if(nuevaRegla) nuevaRegla.onclick = () => modalRegla(null);
+  $$("[data-editregla]").forEach(b => b.onclick = () => modalRegla(b.dataset.editregla));
+  $$("[data-delregla]").forEach(b => b.onclick = () => borrarRegla(b.dataset.delregla));
+  const seedReglas = $("#btnSeedReglas");
+  if(seedReglas) seedReglas.onclick = ev => cargarReglasSugeridas(ev.currentTarget);
+
   const seedModos = $("#btnSeedModos");
   if(seedModos) seedModos.onclick = ev => cargarSugeridos("modos", ev.currentTarget);
 
