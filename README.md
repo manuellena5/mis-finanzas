@@ -17,7 +17,8 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | 5 | Patrimonio: composición por moneda y por tipo, detalle por cuenta | ✅ Completa |
 | 6 | Inversiones: ABM de tenencias y su aporte al patrimonio | ✅ Completa |
 | 7 | Importación de resúmenes de tarjeta (.xlsx) + reglas de categorización | ✅ Completa |
-| 7.1 | Importación de PDF (banco y broker) y MercadoPago | ⏳ Pendiente |
+| 8 | Resúmenes de tarjeta en PDF (Santander Visa/Amex) | ✅ Completa |
+| 8.1 | PDF de caja de ahorro, PPI y Balanz, y MercadoPago | ⏳ Pendiente |
 
 Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 
@@ -30,7 +31,7 @@ Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 | `manifest.json`, `sw.js`, `icon-*.png` | PWA: instalación y app-shell offline |
 | `PLAN.md`, `PROMPT_faseN_*.md` | Plan maestro y prompt de cada fase (locales, en `.gitignore`) |
 
-Única dependencia externa: **SheetJS** por CDN, para leer los `.xlsx` de los resúmenes. El archivo se procesa en el navegador: no se sube a ningún lado.
+Únicas dependencias externas: **SheetJS** y **pdf.js** por CDN, para leer los resúmenes en `.xlsx` y `.pdf`. El archivo se procesa en el navegador: no se sube a ningún lado.
 
 ## Setup del backend (Google Apps Script) — una sola vez
 

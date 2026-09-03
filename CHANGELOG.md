@@ -1,5 +1,26 @@
 # Changelog
 
+## Fase 8 — Resúmenes de tarjeta en PDF (2026-08-28) ✅
+
+El homebanking de Santander entrega los resúmenes en PDF, así que el mismo modal de importación ahora los acepta. **Sólo frontend**: el backend, la preview, las reglas y `saveMovimientos` se reutilizan sin cambios.
+
+**Lectura del PDF**
+- pdf.js 3.11.174 por CDN (con su worker), sumado a la precache del service worker (`mis-finanzas-v3`). El archivo se procesa en tu navegador, igual que el Excel.
+- pdf.js entrega fragmentos con coordenadas, no líneas: `pdfLines()` los reagrupa por `y` y los ordena por `x` para reconstruir cada renglón tal como se ve.
+- `parseTarjetaPDF()` recorre las secciones del resumen (*Pago anterior y devoluciones*, *Movimientos de…*, *Impuestos, intereses y percepciones*), arrastra la fecha cuando la celda viene vacía, descarta las líneas de `Saldo anterior` / `Saldo del resumen anterior` —que son balances, no movimientos—, y limpia número de comprobante y cuotas de la descripción.
+- Fechas en `dd/mm/yy`, importes `$`/`U$S` con negativos, y la fila de seis fechas del encabezado resuelve cierre y vencimiento del período actual.
+
+**Integración**
+- El modal ramifica por extensión: `.pdf` → pdf.js, `.xlsx` → SheetJS. Las dos vías producen la **misma** lista normalizada, así que preview, mapeo a las cuentas ARS/USD de la tarjeta, reglas, deduplicación por `Hash` y guardado en lote son exactamente los de la Fase 7.
+- Los consumos e impuestos entran como Egreso; los pagos y devoluciones (negativos) como Ingreso, bajando la deuda de la tarjeta.
+
+**Conciliación más precisa**
+Ahora el parser captura el **subtotal de consumos** del resumen y la preview concilia contra eso, que es lo que detecta si quedó una línea afuera. Antes se comparaba contra el *total a pagar*, que en los PDF reales incluye otros conceptos y hacía saltar una alerta falsa en cada importación. Cuando no hay subtotal (caso `.xlsx`) sigue comparando contra el total. El mensaje muestra siempre el desglose: consumos · impuestos · pagos.
+
+**Verificado**: el parser da exacto contra los datos de los dos resúmenes reales. Visa 5517 — cierre `2026-07-30`, vencimiento `2026-08-07`, período `2026-07`, 7 consumos por $672.013,12 + U$S6,94 (= el subtotal), fecha arrastrada en la tercera línea, cuotas `6/6` `3/6` `3/9` `2/6`, 4 pagos con las dos líneas de `Saldo…` descartadas, 7 impuestos por $6.617,83. Amex 5802 — vencimiento `2026-08-10`, 9 consumos, 3 pagos, 5 impuestos, con `Google *google one` y `Anthropic* claude sub` a la cuenta USD y la línea de continuación sin importe descartada. `pdfLines` se probó de punta a punta generando un PDF real en el navegador y pasándolo por el input de archivo: reimportarlo marcó las 12 filas como duplicadas y dejó el botón deshabilitado. Sin errores de consola; en 375px la tabla scrollea sola sin arrastrar la página.
+
+**Pendiente**: los PDF de **caja de ahorro** (Santander banco), **PPI** y **Balanz** son otra plantilla — próxima sub-fase. Sus parsers están en el historial de git.
+
 ## Fase 7 — Importación de resúmenes de tarjeta + reglas (2026-08-28) ✅
 
 Importar el Excel de Amex/Visa de Santander y un motor de reglas que autocategoriza por patrón. **Requiere re-deploy** (`version: "fase7"`).
@@ -30,6 +51,8 @@ Importar el Excel de Amex/Visa de Santander y un motor de reglas que autocategor
 - Los `Hits` se llevan solos cuando la regla se aplica en una importación o en el reprocesado.
 
 **Otros**
+- El desplegable de broker en Inversiones sugiere siempre **Balanz** y **PPI**, además de los que ya usaste (sin repetir ni distinguir mayúsculas). Se sigue pudiendo escribir cualquier otro.
+- **Filtro por broker** en Inversiones: pills que además recalculan el total del encabezado y la composición por tipo de activo. El patrimonio y el resumen siguen mostrando todas las tenencias: el filtro es sólo de esa pantalla.
 - El select de categoría del formulario manual arranca en "— elegí una categoría —" en vez de la primera de la lista: antes se podía guardar una categoría por descuido.
 - SheetJS 0.18.5 por CDN, sumado a la precache del service worker (`mis-finanzas-v2`).
 

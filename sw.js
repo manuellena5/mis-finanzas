@@ -5,10 +5,12 @@
    - Estáticos propios y fuentes: cache-first.
    - Llamadas al Apps Script: no se interceptan (son POST y siempre van a la red).
 */
-const CACHE = "mis-finanzas-v2";
+const CACHE = "mis-finanzas-v3";
 
-// Lector de .xlsx para la importación de resúmenes
+// Lectores de resúmenes: .xlsx (SheetJS) y .pdf (pdf.js, con su worker)
 const XLSX_CDN = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const PDFJS_WORKER_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 const SHELL = [
   "./",
@@ -16,7 +18,9 @@ const SHELL = [
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
-  XLSX_CDN
+  XLSX_CDN,
+  PDFJS_CDN,
+  PDFJS_WORKER_CDN
 ];
 
 self.addEventListener("install", (e) => {

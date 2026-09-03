@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -305,6 +306,9 @@ const TIPOS_ACTIVO = [
 ];
 const activoInfo = t => TIPOS_ACTIVO.find(x => x.v === t) || TIPOS_ACTIVO[7];
 
+/* Brokers que siempre aparecen en el desplegable, además de los ya usados. */
+const BROKERS_SUGERIDOS = ["Balanz", "PPI"];
+
 /* ══════════════════════ ESTADO ══════════════════════ */
 const state = {
   url:      localStorage.getItem("mf_url") || "",
@@ -320,6 +324,7 @@ const state = {
   reglas:     [],
   mes:      "",                                               // "YYYY-MM" que se está mirando
   grafico:  "Egreso",                                         // qué muestra el gráfico del Resumen
+  filtroBroker: "",                                           // filtro de la pantalla Inversiones
   filtros:  {tipo:"todos", cuenta:"", categoria:"", texto:""},
   config:   {},
   conectado: false,
@@ -497,6 +502,132 @@ function parseTarjeta(aoa){
   return { lineas, meta:{ totalPesos, totalUsd, cierreIso:cierre, vencIso:venc, periodo:periodoDesdeCierre(cierre) } };
 }
 
+/* ── Resumen de tarjeta en PDF (Santander: Visa, Amex, Mastercard) ── */
+
+/** dd/mm/yy → YYYY-MM-DD (dos dígitos de año ⇒ 20yy). */
+function ddmmyyToIso(s){
+  const m = String(s).match(/(\d{2})\/(\d{2})\/(\d{2})/);
+  return m ? `20${m[3]}-${m[2]}-${m[1]}` : "";
+}
+
+const MONEY = /(-?)\s*(U\$S|\$)\s*([\d.]+,\d{2})/g;
+/** Último importe de la línea: es el que corresponde a la columna de monto. */
+function lastMoney(linea){
+  let m, last = null;
+  MONEY.lastIndex = 0;
+  while((m = MONEY.exec(linea))) last = m;
+  if(!last) return null;
+  return { token:last[0], moneda: last[2] === "U$S" ? "USD" : "ARS", importe: parseNum(last[3]) * (last[1] === "-" ? -1 : 1) };
+}
+
+/** pdf.js entrega fragmentos sueltos: los reagrupamos por `y` y ordenamos por `x`. */
+async function pdfLines(file){
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({data:buf}).promise;
+  const lines = [];
+  for(let p = 1; p <= doc.numPages; p++){
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    const rows = {};
+    tc.items.forEach(it => {
+      if(!it.str) return;
+      const y = Math.round(it.transform[5]);
+      (rows[y] = rows[y] || []).push({ x: it.transform[4], s: it.str });
+    });
+    Object.keys(rows).map(Number).sort((a,b) => b - a).forEach(y => {
+      const line = rows[y].sort((a,b) => a.x - b.x).map(o => o.s).join(" ").replace(/\s+/g, " ").trim();
+      if(line) lines.push(line);
+    });
+  }
+  return lines;
+}
+
+/**
+ * Devuelve las mismas líneas normalizadas que el parser de .xlsx, más la meta
+ * del resumen. `clase` distingue consumo / pago / impuesto.
+ */
+function parseTarjetaPDF(lines){
+  let sec = null, lastDate = "", card = "", totalPesos = null, totalUsd = null, cierre = "", venc = "";
+  let subtotalPesos = null, subtotalUsd = null;
+  const lineas = [];
+
+  for(const raw of lines){
+    const ln = raw.trim();
+
+    const mc = ln.match(/Terminada en (\d{3,})/i);
+    if(mc && !card) card = mc[1];
+
+    const mt = ln.match(/^Total a pagar\s+\$?\s*([\d.]+,\d{2})\s+U\$S\s*([\d.]+,\d{2})/i);
+    if(mt){ totalPesos = parseNum(mt[1]); totalUsd = parseNum(mt[2]); }
+
+    // Fila de 6 fechas (cierre/vencimiento anterior · actual · próximo)
+    if(!cierre && /^\d{2}\/\d{2}\/\d{2}( \d{2}\/\d{2}\/\d{2}){3,}/.test(ln)){
+      const ds = ln.match(/\d{2}\/\d{2}\/\d{2}/g);
+      cierre = ddmmyyToIso(ds[2]);
+      venc   = ddmmyyToIso(ds[3]);
+    }
+
+    if(/^Pago anterior y devoluciones/i.test(ln)){ sec = "pago"; continue; }
+    if(/^Movimientos de/i.test(ln)){ sec = "consumo"; continue; }
+    if(/^Impuestos, intereses y percepciones/i.test(ln)){ sec = "impuesto"; continue; }
+    if(/^Subtotal de/i.test(ln)){
+      // El subtotal de consumos es contra lo que se concilia lo importado
+      MONEY.lastIndex = 0;
+      for(const m of ln.matchAll(MONEY)){
+        const v = parseNum(m[3]) * (m[1] === "-" ? -1 : 1);
+        if(m[2] === "U$S") subtotalUsd = v; else subtotalPesos = v;
+      }
+      if(sec === "consumo") sec = null;
+      continue;
+    }
+    if(/^Total a pagar/i.test(ln)){ sec = null; continue; }
+    if(/^T[eé]rminos y condiciones/i.test(ln)) break;
+    if(/^Fecha Descripci/i.test(ln)) continue;                   // header de la tabla
+    if(!sec) continue;
+    if(/saldo anterior|saldo del resumen/i.test(ln)) continue;    // balances, no movimientos
+
+    const mon = lastMoney(ln);
+    if(!mon) continue;                                            // líneas de continuación, sin importe
+
+    const dm = ln.match(/^(\d{2}\/\d{2}\/\d{2})/);
+    const fecha = dm ? ddmmyyToIso(dm[1]) : lastDate;             // la fecha se arrastra
+    if(dm) lastDate = ddmmyyToIso(dm[1]);
+
+    const cuotaM = ln.match(/(\d+)\s+de\s+(\d+)/);
+    let rest = ln;
+    if(dm) rest = rest.replace(dm[1], "");
+    rest = rest.replace(mon.token, "");
+    if(cuotaM) rest = rest.replace(cuotaM[0], "");
+    rest = rest.replace(/\b\d{5,}\b\s*$/, "");                    // número de comprobante
+    rest = rest.replace(/\s*\$\s*$/, "");                         // "$" colgando en impuestos
+
+    lineas.push({
+      clase: sec,
+      fechaIso: fecha,
+      desc: rest.replace(/\s+/g, " ").trim(),
+      cuotas: cuotaM ? `${cuotaM[1]}/${cuotaM[2]}` : "",
+      moneda: mon.moneda,
+      importe: mon.importe,
+      impuesto: sec === "impuesto"
+    });
+  }
+
+  return {
+    lineas,
+    meta:{ card, totalPesos, totalUsd, subtotalPesos, subtotalUsd, cierreIso:cierre, vencIso:venc, periodo:periodoDesdeCierre(cierre) }
+  };
+}
+
+/** Emisor y número de tarjeta a partir del texto del PDF. */
+function detectarEmisorPDF(lines, card){
+  const texto = lines.slice(0, 40).join(" ").toLowerCase();
+  let emisor = "Tarjeta";
+  if(texto.includes("american express") || texto.includes("amex")) emisor = "Amex";
+  else if(texto.includes("mastercard")) emisor = "Mastercard";
+  else if(texto.includes("visa")) emisor = "Visa";
+  return { emisor, numero: card || "" };
+}
+
 /** Emisor y número de tarjeta, por el texto de las primeras filas. */
 function detectarEmisor(aoa){
   const texto = aoa.slice(0, 25).map(r => r.join(" ")).join(" ").toLowerCase();
@@ -587,11 +718,14 @@ function patrimonio(hasta){
 }
 
 /** Total de las tenencias, al dólar de hoy. */
-function totalInversiones(){
+function totalInversiones(lista){
   const t = acum();
-  for(const i of state.inversiones) sumar(t, valorInversion(i), i.moneda, rate());
+  for(const i of (lista || state.inversiones)) sumar(t, valorInversion(i), i.moneda, rate());
   return t;
 }
+
+/** Nombre de broker de una tenencia, ya normalizado para agrupar y filtrar. */
+const brokerDe = i => String(i.broker || "").trim() || "Sin broker";
 
 /** Cotización de un movimiento: la congelada; si le falta, la de hoy. */
 const tcDe = m => (+m.cotizacion > 0 ? +m.cotizacion : rate());
@@ -957,11 +1091,24 @@ function viewInversiones(){
       </div></div>`;
   }
 
-  const t = totalInversiones();
+  /* Filtro por broker */
+  const listaBrokers = [...new Set(state.inversiones.map(brokerDe))].sort((a,b) => a.localeCompare(b, "es"));
+  if(state.filtroBroker && !listaBrokers.includes(state.filtroBroker)) state.filtroBroker = "";
+  const invs = state.filtroBroker
+    ? state.inversiones.filter(i => brokerDe(i) === state.filtroBroker)
+    : state.inversiones;
+
+  const pillsBroker = listaBrokers.length > 1 ? `
+    <div class="filtros">
+      <button class="pill ${state.filtroBroker ? "" : "on"}" data-broker="">Todos</button>
+      ${listaBrokers.map(b => `<button class="pill ${state.filtroBroker === b ? "on" : ""}" data-broker="${esc(b)}">${esc(b)}</button>`).join("")}
+    </div>` : "";
+
+  const t = totalInversiones(invs);
 
   /* Composición por tipo de activo */
   const porTipo = {};
-  for(const i of state.inversiones){
+  for(const i of invs){
     const k = i.tipoActivo || "otro";
     if(!porTipo[k]) porTipo[k] = Object.assign(acum(), {nombre:activoInfo(k).l, color:activoInfo(k).color});
     sumar(porTipo[k], valorInversion(i), i.moneda, rate());
@@ -970,9 +1117,8 @@ function viewInversiones(){
 
   /* Detalle agrupado por broker */
   const brokers = {};
-  for(const i of state.inversiones){
-    const k = i.broker || "Sin broker";
-    (brokers[k] || (brokers[k] = [])).push(i);
+  for(const i of invs){
+    (brokers[brokerDe(i)] || (brokers[brokerDe(i)] = [])).push(i);
   }
   const detalle = Object.keys(brokers).sort((a,b) => a.localeCompare(b, "es")).map(b => {
     const sub = acum();
@@ -991,12 +1137,15 @@ function viewInversiones(){
     <h2 class="tab-title">Inversiones</h2>
 
     <div class="hero">
-      <div class="lbl">Total en tenencias</div>
+      <div class="lbl">${!state.filtroBroker ? "Total en tenencias"
+        : state.filtroBroker === "Sin broker" ? "Total sin broker"
+        : "Total en " + esc(state.filtroBroker)}</div>
       <div class="v num">${state.cur === "USD" ? fmt(t.usd, "USD", 0) : fmt(t.ars, "ARS", 0)}</div>
       ${state.cur === "ambas" ? `<div class="u num">${fmt(t.usd, "USD", 0)}</div>` : ""}
-      <div class="u">${state.inversiones.length} ${state.inversiones.length === 1 ? "tenencia" : "tenencias"}${faltan(t) ? ` · ${faltan(t)} sin cotización` : ""}</div>
+      <div class="u">${invs.length} ${invs.length === 1 ? "tenencia" : "tenencias"}${state.filtroBroker ? ` de ${state.inversiones.length}` : ""}${faltan(t) ? ` · ${faltan(t)} sin cotización` : ""}</div>
     </div>
 
+    ${pillsBroker}
     ${cardComposicion("Por tipo de activo", filasTipo)}
     ${detalle}
 
@@ -1029,11 +1178,23 @@ function bindInversiones(){
   const nueva = $("#btnNuevaInv");
   if(nueva) nueva.onclick = () => modalInversion(null);
   $$("[data-inv]").forEach(b => b.onclick = () => modalInversion(b.dataset.inv));
+  $$("[data-broker]").forEach(b => b.onclick = () => { state.filtroBroker = b.dataset.broker; render(); });
 }
 
 function modalInversion(id){
   const i = id ? state.inversiones.find(x => x.id === id) : null;
-  const brokers = [...new Set(state.inversiones.map(x => x.broker).filter(Boolean))];
+  // Sugeridos + los que ya usaste, sin repetir (sin distinguir mayúsculas)
+  const brokers = (() => {
+    const vistos = new Set(), out = [];
+    for(const b of BROKERS_SUGERIDOS.concat(state.inversiones.map(x => x.broker))){
+      const nombre = String(b || "").trim();
+      const clave = nombre.toLowerCase();
+      if(!clave || vistos.has(clave)) continue;
+      vistos.add(clave);
+      out.push(nombre);
+    }
+    return out.sort((a,z) => a.localeCompare(z, "es"));
+  })();
 
   $("#modalRoot").innerHTML = `
   <div class="overlay" id="ovInv">
@@ -1369,13 +1530,13 @@ function modalImportar(){
     return `
       <button class="close" id="mClose">×</button>
       <h3>Importar resumen de tarjeta</h3>
-      <p class="hint">Excel (<b>.xlsx</b>) del resumen de Amex o Visa. El archivo se lee en tu navegador: no se sube a ningún lado.</p>
+      <p class="hint">Resumen de Visa, Amex o Mastercard en <b>.pdf</b> o <b>.xlsx</b>. El archivo se lee en tu navegador: no se sube a ningún lado.</p>
       <div class="drop" id="dropZone">
         <span class="big">⬆</span>
         Arrastrá el archivo acá o tocá para elegirlo
       </div>
-      <input type="file" id="fileInput" accept=".xlsx,.xls" class="hidden">
-      <p class="hint" style="margin-top:14px">Los PDF de banco y broker todavía no: por ahora sólo resúmenes de tarjeta en Excel.</p>`;
+      <input type="file" id="fileInput" accept=".pdf,.xlsx,.xls" class="hidden">
+      <p class="hint" style="margin-top:14px">Los resúmenes de caja de ahorro y las tenencias de broker todavía no: por ahora sólo tarjetas.</p>`;
   }
 
   function bindArchivo(){
@@ -1393,15 +1554,27 @@ function modalImportar(){
   }
 
   async function leerArchivo(file){
-    if(typeof XLSX === "undefined"){ toast("El lector de Excel todavía está cargando, probá en un segundo"); return; }
+    const esPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
     try{
-      const buf = await file.arrayBuffer();
-      const wb  = XLSX.read(buf, {type:"array"});
-      const ws  = wb.Sheets[wb.SheetNames[0]];
-      const aoa = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:""});
-      const { lineas, meta } = parseTarjeta(aoa);
+      let lineas, meta, info;
+
+      if(esPdf){
+        if(typeof pdfjsLib === "undefined"){ toast("El lector de PDF todavía está cargando, probá en un segundo"); return; }
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        const lines = await pdfLines(file);
+        ({ lineas, meta } = parseTarjetaPDF(lines));
+        info = detectarEmisorPDF(lines, meta.card);
+      }else{
+        if(typeof XLSX === "undefined"){ toast("El lector de Excel todavía está cargando, probá en un segundo"); return; }
+        const buf = await file.arrayBuffer();
+        const wb  = XLSX.read(buf, {type:"array"});
+        const ws  = wb.Sheets[wb.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:""});
+        ({ lineas, meta } = parseTarjeta(aoa));
+        info = detectarEmisor(aoa);
+      }
+
       if(!lineas.length){ toast("No encontré consumos en ese archivo"); return; }
-      const info = detectarEmisor(aoa);
       est.datos   = { ...info, lineas, meta };
       est.archivo = file.name;
       est.periodo = meta.periodo || mesActual();
@@ -1468,12 +1641,33 @@ function modalImportar(){
     const aImportar = est.filas.filter(f => f.sel && !f.dup).length;
     const manuales  = est.filas.filter(f => f.categoriaManual && f.categoria && f.sel && !f.dup).length;
 
-    // Conciliación informativa contra el total del resumen
-    const sumaArs = est.datos.lineas.filter(l => l.moneda === "ARS").reduce((a,l) => a + l.importe, 0);
-    const sumaUsd = est.datos.lineas.filter(l => l.moneda === "USD").reduce((a,l) => a + l.importe, 0);
-    const difArs = meta.totalPesos != null ? Math.abs(sumaArs - meta.totalPesos) : 0;
-    const difUsd = meta.totalUsd  != null ? Math.abs(sumaUsd - meta.totalUsd)  : 0;
-    const concilia = difArs < 1 && difUsd < 0.05;
+    /* Conciliación informativa: sirve para ver si quedó alguna línea afuera.
+       Si el resumen trae el subtotal de consumos, se compara contra eso (es lo
+       exacto); si no, contra el total a pagar. */
+    const suma = (mon, filtro) => est.datos.lineas
+      .filter(l => l.moneda === mon && filtro(l)).reduce((a,l) => a + l.importe, 0);
+    const consumosArs = suma("ARS", l => l.importe > 0 && !l.impuesto);
+    const consumosUsd = suma("USD", l => l.importe > 0 && !l.impuesto);
+    const impuestosArs = suma("ARS", l => l.importe > 0 && l.impuesto);
+    const pagosArs = suma("ARS", l => l.importe < 0);
+    const pagosUsd = suma("USD", l => l.importe < 0);
+
+    const cerca = (a, b, tol) => b != null && Math.abs(a - b) < tol;
+    const contraSubtotal = meta.subtotalPesos != null || meta.subtotalUsd != null;
+    const refArs = contraSubtotal ? meta.subtotalPesos : meta.totalPesos;
+    const refUsd = contraSubtotal ? meta.subtotalUsd  : meta.totalUsd;
+    const propioArs = contraSubtotal ? consumosArs : consumosArs + impuestosArs;
+    const propioUsd = consumosUsd;
+    const concilia =
+      (refArs == null || cerca(propioArs, refArs, 1) || cerca(propioArs + pagosArs, refArs, 1)) &&
+      (refUsd == null || cerca(propioUsd, refUsd, 0.05) || cerca(propioUsd + pagosUsd, refUsd, 0.05));
+
+    const conRef = refArs != null || refUsd != null;
+    const nombreRef = contraSubtotal ? "el subtotal de consumos" : "el total del resumen";
+    const detalleConcil =
+      `Consumos ${fmt(consumosArs, "ARS")}${consumosUsd ? " / " + fmt(consumosUsd, "USD") : ""}` +
+      (impuestosArs ? ` · impuestos ${fmt(impuestosArs, "ARS")}` : "") +
+      ((pagosArs || pagosUsd) ? ` · pagos ${fmt(pagosArs, "ARS")}${pagosUsd ? " / " + fmt(pagosUsd, "USD") : ""}` : "");
 
     const filasHtml = est.filas.map(f => {
       const cats = catsPara(f.tipo);
@@ -1502,9 +1696,9 @@ function modalImportar(){
         ${meta.cierreIso ? `<span class="m">Cierre<b>${dispDate(meta.cierreIso)}</b></span>` : ""}
         ${meta.vencIso ? `<span class="m">Vencimiento<b>${dispDate(meta.vencIso)}</b></span>` : ""}
       </div>
-      ${meta.totalPesos != null ? `<p class="hint" style="margin:2px 0 10px">${concilia
-        ? "✓ Las líneas suman exactamente el total del resumen."
-        : `Las líneas suman ${fmt(sumaArs, "ARS")}${meta.totalUsd ? " / " + fmt(sumaUsd, "USD") : ""} contra el total del resumen. Revisá antes de confirmar.`}</p>` : ""}
+      ${conRef ? `<p class="hint" style="margin:2px 0 10px">${concilia
+        ? `✓ Lo detectado coincide con ${nombreRef}. ${detalleConcil}.`
+        : `${detalleConcil}. No coincide con ${nombreRef} (${fmt(refArs || 0, "ARS")}${refUsd ? " / " + fmt(refUsd, "USD") : ""}): puede haber quedado alguna línea afuera.`}</p>` : ""}
 
       <div class="row2">
         <div>
