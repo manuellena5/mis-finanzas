@@ -203,6 +203,15 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .tbl th{position:sticky;top:0;background:var(--card);text-align:left;color:var(--faint);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;z-index:1}
 .tbl td{padding:6px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
 .tbl tr.dup td{opacity:.45}
+.tbl tr.matchea td{background:#0F51320d}
+.tbl input[type=date]{padding:4px 6px;border:1px solid var(--line);border-radius:7px;font-size:11.5px;background:#fff;color:var(--ink);font-family:'DM Mono',ui-monospace,monospace}
+.tbl tr.reglaEd td{background:var(--green-bg);border-bottom:1px solid var(--green-line)}
+.reglaform{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:4px 0}
+.reglaform label{display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.reglaform input,.reglaform select{padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;background:#fff;color:var(--ink);font-weight:400;text-transform:none;letter-spacing:0}
+.reglaform input[type=text]{min-width:150px}
+.reglaform .rinfo{font-size:11.5px;color:var(--green);font-weight:600;padding-bottom:6px}
+.reglaform .rinfo.vacio{color:var(--danger)}
 .tbl td.num{text-align:right;white-space:nowrap;font-weight:600}
 .tbl td.num.pos{color:var(--green-med)}
 .tbl td.num.neg{color:var(--danger)}
@@ -1577,7 +1586,7 @@ function cardComposicion(titulo, filasTodas){
 
 /* ══════════════════════ IMPORTACIÓN DE RESÚMENES ══════════════════════ */
 function modalImportar(){
-  const est = { datos:null, filas:[], periodo:"", cuentaArs:"", cuentaUsd:"", archivo:"", crearReglas:true };
+  const est = { datos:null, filas:[], periodo:"", fechaResumen:"", cuentaArs:"", cuentaUsd:"", archivo:"" };
 
   $("#modalRoot").innerHTML = `<div class="overlay" id="ovImp"><div class="modal wide" id="impBody"></div></div>`;
   const cerrar = () => { $("#modalRoot").innerHTML = ""; };
@@ -1635,7 +1644,8 @@ function modalImportar(){
       if(!lineas.length){ toast("No encontré consumos en ese archivo"); return; }
       est.datos   = { ...info, lineas, meta };
       est.archivo = file.name;
-      est.periodo = meta.periodo || mesActual();
+      est.fechaResumen = meta.cierreIso || "";
+      est.periodo = meta.periodo || (est.fechaResumen ? periodoDesdeCierre(est.fechaResumen) : mesActual());
       elegirCuentas();
       construirFilas();
       pintar();
@@ -1661,6 +1671,7 @@ function modalImportar(){
       const regla = aplicarReglas(concepto);
       return {
         i, fecha:l.fechaIso, concepto, moneda:l.moneda,
+        fechaResumen: est.fechaResumen || l.fechaIso,   // el cierre del resumen
         monto: Math.abs(l.importe),
         tipo: l.importe < 0 ? "Ingreso" : "Egreso",   // negativo = pago o devolución
         esPago: l.importe < 0,
@@ -1668,10 +1679,28 @@ function modalImportar(){
         categoria: (regla && regla.categoria) || "",
         reglaId: regla ? regla.id : "",
         categoriaManual: false,
+        nuevaRegla: null,                              // {patron, tipoPatron, categoria, tipo, prioridad}
         sel: true
       };
     });
     revisarDuplicados();
+  }
+
+  /** Regla prellenada a partir de una fila, para el editor inline. */
+  function reglaDesdeFila(f){
+    return {
+      patron: patronDesde(f.concepto),
+      tipoPatron: "contiene",
+      categoria: f.categoria || "",
+      tipo: "",
+      prioridad: 10
+    };
+  }
+
+  /** Cuántas filas del resumen matchearía un patrón que se está editando. */
+  function alcanceRegla(regla){
+    if(!regla || !String(regla.patron || "").trim()) return [];
+    return est.filas.filter(f => matchRegla(f.concepto, regla)).map(f => f.i);
   }
 
   /** Recalcula el hash con la cuenta elegida y marca lo que ya está cargado. */
@@ -1692,12 +1721,86 @@ function modalImportar(){
       `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)}${c.tipo === "tarjeta" ? "" : " · " + tipoInfo(c.tipo).l}</option>`).join("");
   }
 
+  /** Una fila de la previsualización, con sus dos fechas editables. */
+  function filaPreview(f){
+    const cats = catsPara(f.tipo);
+    const opts = `<option value="">Sin categoría</option>` + cats.map(c =>
+      `<option value="${esc(c.id)}" ${f.categoria === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("");
+    const chip = f.esImpuesto ? `<span class="tag">impuesto</span>` : (f.esPago ? `<span class="tag ok">pago</span>` : "");
+    return `
+    <tr data-row="${f.i}" class="${f.dup ? "dup" : ""}">
+      <td><input type="checkbox" data-sel="${f.i}" ${f.sel ? "checked" : ""} ${f.dup ? "disabled" : ""}></td>
+      <td><input type="date" data-fecha="${f.i}" value="${esc(f.fecha)}"></td>
+      <td><input type="date" data-fres="${f.i}" value="${esc(f.fechaResumen || f.fecha)}"></td>
+      <td>${esc(f.concepto)} ${chip}<span data-dup="${f.i}">${f.dup ? `<span class="tag off">ya está</span>` : ""}</span></td>
+      <td class="num ${f.esPago ? "pos" : "neg"}">${f.esPago ? "+" : "−"}${fmt(f.monto, f.moneda)}</td>
+      <td><span class="tag ${f.moneda === "USD" ? "usd" : ""}">${f.moneda}</span></td>
+      <td><select data-cat="${f.i}">${opts}</select></td>
+      <td style="text-align:center"><input type="checkbox" data-regla="${f.i}" title="Crear una regla a partir de este movimiento" ${f.nuevaRegla ? "checked" : ""}></td>
+    </tr>`;
+  }
+
+  /** Editor inline de la regla de una fila (se despliega debajo de ella). */
+  function editorRegla(f){
+    const r = f.nuevaRegla;
+    const alcance = alcanceRegla(r).length;
+    return `
+    <tr class="reglaEd" data-reglaed="${f.i}">
+      <td></td>
+      <td colspan="7">
+        <div class="reglaform">
+          <label>El concepto
+            <select data-rmatch="${f.i}">
+              ${TIPOS_PATRON.map(t => `<option value="${t.v}" ${r.tipoPatron === t.v ? "selected" : ""}>${t.l}</option>`).join("")}
+            </select>
+          </label>
+          <label>Patrón
+            <input type="text" data-rpatron="${f.i}" value="${esc(r.patron)}" placeholder="netflix" autocomplete="off">
+          </label>
+          <label>Categoría
+            <select data-rcat="${f.i}">
+              <option value="">— ninguna —</option>
+              ${state.categorias.map(c => `<option value="${esc(c.id)}" ${r.categoria === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Forzar tipo
+            <select data-rtipo="${f.i}">
+              <option value="">— no —</option>
+              ${TIPOS_MOV.map(t => `<option value="${t}" ${r.tipo === t ? "selected" : ""}>${t}</option>`).join("")}
+            </select>
+          </label>
+          <label>Prioridad
+            <input type="number" step="1" style="width:70px" data-rprio="${f.i}" value="${esc(r.prioridad)}">
+          </label>
+          <span class="rinfo ${r.patron.trim() ? "" : "vacio"}" data-rinfo="${f.i}">${textoAlcance(r, alcance)}</span>
+        </div>
+      </td>
+    </tr>`;
+  }
+
+  function textoAlcance(r, n){
+    if(!String(r.patron || "").trim()) return "Sin patrón no se crea la regla";
+    return n === 1 ? "Matchea 1 línea de este resumen" : `Matchea ${n} líneas de este resumen`;
+  }
+
+  const cuentaImportar = () => est.filas.filter(f => f.sel && !f.dup).length;
+  const reglasAcrear   = () => est.filas.filter(f => f.nuevaRegla && String(f.nuevaRegla.patron || "").trim()).length;
+  function textoPie(){
+    const n = cuentaImportar(), dups = est.filas.filter(f => f.dup).length, r = reglasAcrear();
+    return `${n} de ${est.filas.length} para importar` +
+      (dups ? ` · ${dups} ya estaban cargadas` : "") +
+      (r ? ` · ${r} ${r === 1 ? "regla nueva" : "reglas nuevas"}` : "") + ".";
+  }
+  function textoBoton(){
+    const n = cuentaImportar();
+    return `Importar ${n} movimiento${n === 1 ? "" : "s"}`;
+  }
+
   function vistaPreview(){
     const { meta } = est.datos;
     const hayUsd = est.filas.some(f => f.moneda === "USD");
     const dups   = est.filas.filter(f => f.dup).length;
-    const aImportar = est.filas.filter(f => f.sel && !f.dup).length;
-    const manuales  = est.filas.filter(f => f.categoriaManual && f.categoria && f.sel && !f.dup).length;
+    const aImportar = cuentaImportar();
 
     /* Conciliación informativa: sirve para ver si quedó alguna línea afuera.
        Si el resumen trae el subtotal de consumos, se compara contra eso (es lo
@@ -1727,21 +1830,7 @@ function modalImportar(){
       (impuestosArs ? ` · impuestos ${fmt(impuestosArs, "ARS")}` : "") +
       ((pagosArs || pagosUsd) ? ` · pagos ${fmt(pagosArs, "ARS")}${pagosUsd ? " / " + fmt(pagosUsd, "USD") : ""}` : "");
 
-    const filasHtml = est.filas.map(f => {
-      const cats = catsPara(f.tipo);
-      const opts = `<option value="">Sin categoría</option>` + cats.map(c =>
-        `<option value="${esc(c.id)}" ${f.categoria === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("");
-      const chip = f.esImpuesto ? `<span class="tag">impuesto</span>` : (f.esPago ? `<span class="tag ok">pago</span>` : "");
-      return `
-      <tr class="${f.dup ? "dup" : ""}">
-        <td><input type="checkbox" data-sel="${f.i}" ${f.sel ? "checked" : ""} ${f.dup ? "disabled" : ""}></td>
-        <td>${dispDate(f.fecha)}</td>
-        <td>${esc(f.concepto)} ${chip}${f.dup ? ` <span class="tag off">ya está</span>` : ""}</td>
-        <td class="num ${f.esPago ? "pos" : "neg"}">${f.esPago ? "+" : "−"}${fmt(f.monto, f.moneda)}</td>
-        <td><span class="tag ${f.moneda === "USD" ? "usd" : ""}">${f.moneda}</span></td>
-        <td><select data-cat="${f.i}">${opts}</select></td>
-      </tr>`;
-    }).join("");
+    const filasHtml = est.filas.map(f => filaPreview(f) + (f.nuevaRegla ? editorRegla(f) : "")).join("");
 
     return `
       <button class="close" id="mClose">×</button>
@@ -1764,8 +1853,9 @@ function modalImportar(){
           <select class="f" id="impCuentaArs">${optCuentasTarjeta("ARS", est.cuentaArs)}</select>
         </div>
         <div>
-          <label class="f" for="impPeriodo">Período del resumen</label>
-          <input class="f" id="impPeriodo" type="month" value="${esc(est.periodo)}">
+          <label class="f" for="impFechaResumen">Fecha de resumen (cierre)</label>
+          <input class="f" id="impFechaResumen" type="date" value="${esc(est.fechaResumen || "")}">
+          <p class="hint" style="margin:6px 0 0">Se aplica a todas las líneas; después se puede corregir una por una. Período <b>${esc(est.periodo || "—")}</b>${meta.vencIso ? ` · vence ${dispDate(meta.vencIso)}` : ""}.</p>
         </div>
       </div>
       ${hayUsd ? `
@@ -1779,18 +1869,52 @@ function modalImportar(){
         <table class="tbl">
           <thead><tr>
             <th><input type="checkbox" id="selTodos" ${aImportar && aImportar === est.filas.filter(f => !f.dup).length ? "checked" : ""}></th>
-            <th>Fecha</th><th>Concepto</th><th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría</th>
+            <th>Fecha consumo</th><th>Fecha resumen</th><th>Concepto</th>
+            <th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría</th><th>Regla</th>
           </tr></thead>
           <tbody>${filasHtml}</tbody>
         </table>
       </div>
 
-      <p class="hint" style="margin:10px 0 0">${aImportar} de ${est.filas.length} para importar${dups ? ` · ${dups} ya estaban cargadas` : ""}.</p>
-      ${manuales ? `<label class="check"><input type="checkbox" id="impCrearReglas" ${est.crearReglas ? "checked" : ""}> Crear reglas para las ${manuales} categorías que asigné a mano</label>` : ""}
+      <p class="hint" style="margin:10px 0 0" id="impPie">${textoPie()}</p>
 
       <div class="btn-row" style="margin-top:16px">
-        <button class="btn primary block" id="btnImportar" ${aImportar ? "" : "disabled"}>Importar ${aImportar} movimiento${aImportar === 1 ? "" : "s"}</button>
+        <button class="btn primary block" id="btnImportar" ${aImportar ? "" : "disabled"}>${textoBoton()}</button>
       </div>`;
+  }
+
+  /* Las filas se actualizan en el DOM sin repintar todo el modal: si repintáramos,
+     un input de fecha o de patrón perdería el foco a mitad de la edición. */
+  function refrescarPie(){
+    const pie = $("#impPie"); if(pie) pie.textContent = textoPie();
+    const btn = $("#btnImportar");
+    if(btn && !btn.disabled || btn && cuentaImportar()){ btn.textContent = textoBoton(); }
+    if(btn) btn.disabled = !cuentaImportar();
+  }
+  function refrescarFila(i){
+    const f = est.filas[i];
+    const tr = $(`tr[data-row="${i}"]`);
+    if(!tr) return;
+    tr.classList.toggle("dup", !!f.dup);
+    const chk = $(`[data-sel="${i}"]`);
+    if(chk){ chk.checked = !!f.sel; chk.disabled = !!f.dup; }
+    const marca = $(`[data-dup="${i}"]`);
+    if(marca) marca.innerHTML = f.dup ? `<span class="tag off">ya está</span>` : "";
+  }
+  /** Resalta las filas que matchearían los patrones que se están editando. */
+  function refrescarResaltado(){
+    const alcanzadas = new Set();
+    est.filas.forEach(f => { if(f.nuevaRegla) alcanceRegla(f.nuevaRegla).forEach(i => alcanzadas.add(i)); });
+    est.filas.forEach(f => {
+      const tr = $(`tr[data-row="${f.i}"]`);
+      if(tr) tr.classList.toggle("matchea", alcanzadas.has(f.i));
+    });
+  }
+  function refrescarInfoRegla(i){
+    const f = est.filas[i], info = $(`[data-rinfo="${i}"]`);
+    if(!f.nuevaRegla || !info) return;
+    info.textContent = textoAlcance(f.nuevaRegla, alcanceRegla(f.nuevaRegla).length);
+    info.classList.toggle("vacio", !String(f.nuevaRegla.patron || "").trim());
   }
 
   function bindPreview(){
@@ -1799,29 +1923,91 @@ function modalImportar(){
     $("#impCuentaArs").onchange = e => { est.cuentaArs = e.target.value; revisarDuplicados(); pintar(); };
     const selUsd = $("#impCuentaUsd");
     if(selUsd) selUsd.onchange = e => { est.cuentaUsd = e.target.value; revisarDuplicados(); pintar(); };
-    $("#impPeriodo").onchange = e => { est.periodo = e.target.value; };
+
+    // Atajo: la fecha de cierre se aplica a todas las líneas de una
+    $("#impFechaResumen").onchange = e => {
+      est.fechaResumen = e.target.value;
+      est.periodo = periodoDesdeCierre(est.fechaResumen) || est.periodo;
+      est.filas.forEach(f => { f.fechaResumen = est.fechaResumen || f.fecha; });
+      pintar();
+    };
 
     const btnUsd = $("#btnCrearUsd");
     if(btnUsd) btnUsd.onclick = ev => crearCuentaUsd(ev.currentTarget);
 
     $("#selTodos").onchange = e => {
       est.filas.forEach(f => { if(!f.dup) f.sel = e.target.checked; });
-      pintar();
+      est.filas.forEach(f => refrescarFila(f.i));
+      refrescarPie();
     };
     $$("[data-sel]").forEach(ch => ch.onchange = () => {
-      const f = est.filas[+ch.dataset.sel];
-      f.sel = ch.checked;
-      pintar();
+      est.filas[+ch.dataset.sel].sel = ch.checked;
+      refrescarPie();
     });
+
+    // Fechas por fila: la de consumo entra en el hash, así que hay que revisar duplicados
+    $$("[data-fecha]").forEach(inp => inp.onchange = () => {
+      const i = +inp.dataset.fecha, f = est.filas[i];
+      f.fecha = inp.value || f.fecha;
+      inp.value = f.fecha;
+      revisarDuplicados();
+      est.filas.forEach(x => refrescarFila(x.i));
+      refrescarPie();
+    });
+    $$("[data-fres]").forEach(inp => inp.onchange = () => {
+      const f = est.filas[+inp.dataset.fres];
+      f.fechaResumen = inp.value || f.fecha;
+      inp.value = f.fechaResumen;
+    });
+
     $$("[data-cat]").forEach(sel => sel.onchange = () => {
-      const f = est.filas[+sel.dataset.cat];
+      const i = +sel.dataset.cat, f = est.filas[i];
       f.categoria = sel.value;
       f.categoriaManual = true;
-      pintar();
+      // Si la fila tiene el editor de regla abierto, seguimos la categoría elegida
+      if(f.nuevaRegla){
+        f.nuevaRegla.categoria = sel.value;
+        const rcat = $(`[data-rcat="${i}"]`);
+        if(rcat) rcat.value = sel.value;
+      }
     });
-    const chkReglas = $("#impCrearReglas");
-    if(chkReglas) chkReglas.onchange = e => { est.crearReglas = e.target.checked; };
 
+    // Checkbox "Regla" por fila: despliega el editor inline debajo
+    $$("[data-regla]").forEach(ch => ch.onchange = () => {
+      const i = +ch.dataset.regla, f = est.filas[i];
+      f.nuevaRegla = ch.checked ? reglaDesdeFila(f) : null;
+      pintar();
+      if(ch.checked){
+        const inp = $(`[data-rpatron="${i}"]`);
+        if(inp){ inp.focus(); inp.select(); }
+      }
+    });
+
+    // Campos del editor de regla
+    $$("[data-rpatron]").forEach(inp => inp.oninput = () => {
+      const i = +inp.dataset.rpatron;
+      est.filas[i].nuevaRegla.patron = inp.value;
+      refrescarInfoRegla(i);
+      refrescarResaltado();
+      refrescarPie();
+    });
+    $$("[data-rmatch]").forEach(sel => sel.onchange = () => {
+      const i = +sel.dataset.rmatch;
+      est.filas[i].nuevaRegla.tipoPatron = sel.value;
+      refrescarInfoRegla(i);
+      refrescarResaltado();
+    });
+    $$("[data-rcat]").forEach(sel => sel.onchange = () => {
+      est.filas[+sel.dataset.rcat].nuevaRegla.categoria = sel.value;
+    });
+    $$("[data-rtipo]").forEach(sel => sel.onchange = () => {
+      est.filas[+sel.dataset.rtipo].nuevaRegla.tipo = sel.value;
+    });
+    $$("[data-rprio]").forEach(inp => inp.onchange = () => {
+      est.filas[+inp.dataset.rprio].nuevaRegla.prioridad = parseInt(inp.value, 10) || 0;
+    });
+
+    refrescarResaltado();
     $("#btnImportar").onclick = ev => confirmar(ev.currentTarget);
   }
 
@@ -1877,7 +2063,7 @@ function modalImportar(){
           moneda: f.moneda, monto: f.monto,
           monedaDestino: "", montoDestino: null,
           cotizacion: cot || null, modoPago: modoCredito, observacion: obs,
-          fechaResumen: meta.cierreIso || f.fecha,   // el cierre del resumen que lo factura
+          fechaResumen: f.fechaResumen || f.fecha,   // el cierre del resumen que lo factura
           timestamp: "", hash: f.hash, fuente: "import"
         });
       }
@@ -1886,20 +2072,30 @@ function modalImportar(){
 
       // Reflejamos localmente lo que el backend efectivamente guardó
       const yaEstaban = new Set(state.movimientos.map(m => m.hash || calcHash(m)));
+      const importados = [];
       movimientos.forEach(m => {
         if(!yaEstaban.has(m.hash)){
           yaEstaban.add(m.hash);
-          state.movimientos.push({...m, timestamp: ahoraLocal()});
+          const guardado = {...m, timestamp: ahoraLocal()};
+          state.movimientos.push(guardado);
+          importados.push(guardado);
         }
       });
       state.movimientos = ordenarMovs(state.movimientos);
       if(movimientos.length) state.mes = mesLente(movimientos[0]);
 
-      await actualizarReglas(sel);
+      const nuevasReglas = await actualizarReglas(sel);
+      // Con las reglas recién creadas, categorizamos lo que entró sin categoría
+      const recategorizados = nuevasReglas
+        ? await aplicarReglasA(importados.filter(m => !m.categoria))
+        : 0;
 
       cerrar();
       render();
-      toast(`Importados ${res.guardados}${res.omitidos ? ` · ${res.omitidos} ya estaban` : ""}`);
+      toast(`Importados ${res.guardados}` +
+        (res.omitidos ? ` · ${res.omitidos} ya estaban` : "") +
+        (nuevasReglas ? ` · ${nuevasReglas} ${nuevasReglas === 1 ? "regla creada" : "reglas creadas"}` : "") +
+        (recategorizados ? ` · ${recategorizados} categorizados por las reglas` : ""));
     }catch(e){
       toast(e.message);
       btn.disabled = false; btn.textContent = "Reintentar importación";
@@ -1907,6 +2103,10 @@ function modalImportar(){
   }
 
   /** Suma hits a las reglas que se aplicaron y crea las nuevas que pidió el usuario. */
+  /**
+   * Suma hits a las reglas que se aplicaron y crea las que el usuario pidió con
+   * el checkbox "Regla" de cada fila. Devuelve cuántas reglas nuevas se crearon.
+   */
   async function actualizarReglas(filas){
     const cambios = [];
 
@@ -1917,25 +2117,37 @@ function modalImportar(){
       if(r) cambios.push({...r, hits:(+r.hits || 0) + hits[id]});
     });
 
-    if(est.crearReglas){
-      const vistos = new Set();
-      for(const f of filas){
-        if(!f.categoriaManual || !f.categoria) continue;
-        const patron = patronDesde(f.concepto);
-        if(!patron) continue;
-        const clave = patron + "|" + f.categoria;
-        if(vistos.has(clave)) continue;
-        vistos.add(clave);
-        if(state.reglas.some(r => r.patron.toLowerCase() === patron && r.categoria === f.categoria)) continue;
-        cambios.push({id:uid(), patron, tipoPatron:"contiene", categoria:f.categoria, tipo:"", prioridad:10, hits:0, activo:true});
-      }
+    // Una regla por cada fila con el checkbox activo y patrón cargado
+    const nuevas = [];
+    const vistos = new Set();
+    for(const f of est.filas){
+      const r = f.nuevaRegla;
+      if(!r) continue;
+      const patron = String(r.patron || "").trim();
+      if(!patron || (!r.categoria && !r.tipo)) continue;
+      const clave = patron.toLowerCase() + "|" + r.categoria + "|" + r.tipoPatron;
+      if(vistos.has(clave)) continue;
+      vistos.add(clave);
+      if(state.reglas.some(x => x.patron.toLowerCase() === patron.toLowerCase() &&
+                                x.categoria === r.categoria && x.tipoPatron === r.tipoPatron)) continue;
+      nuevas.push({
+        id: uid(), patron, tipoPatron: r.tipoPatron || "contiene",
+        categoria: r.categoria || "", tipo: r.tipo || "",
+        prioridad: +r.prioridad || 10, hits: 0, activo: true
+      });
     }
+    cambios.push(...nuevas);
 
-    if(!cambios.length) return;
+    if(!cambios.length) return 0;
     try{
       const d = await api({action:"saveReglas", reglas:cambios});
       state.reglas = (d.reglas || []).filter(r => r.activo !== false);
-    }catch(e){ /* las reglas son secundarias: no rompemos la importación */ }
+      return nuevas.length;
+    }catch(e){
+      // Las reglas son secundarias: si fallan, la importación ya quedó guardada
+      toast("Los movimientos se importaron, pero no pude guardar las reglas: " + e.message);
+      return 0;
+    }
   }
 
   function pintar(){
@@ -2144,23 +2356,24 @@ function bindMovimientos(){
   if(apl) apl.onclick = ev => aplicarReglasPendientes(ev.currentTarget);
 }
 
-/** Corre las reglas sobre los movimientos sin categoría y guarda los que cambian. */
-async function aplicarReglasPendientes(btn){
-  const pendientes = state.movimientos.filter(m => !m.categoria && m.tipo !== "Interno");
+/**
+ * Corre las reglas sobre una lista de movimientos y guarda los que cambian.
+ * Devuelve cuántos se categorizaron. `onProgreso` es opcional (para el botón).
+ */
+async function aplicarReglasA(movs, onProgreso){
   const cambios = [], hits = {};
-  for(const m of pendientes){
+  for(const m of movs){
+    if(m.categoria || m.tipo === "Interno") continue;
     const r = aplicarReglas(m.concepto);
     if(!r || !r.categoria) continue;
     cambios.push({...m, categoria:r.categoria, tipo:r.tipo || m.tipo});
     hits[r.id] = (hits[r.id] || 0) + 1;
   }
-  if(!cambios.length){ toast("Ninguna regla aplica a los movimientos sin categoría"); return; }
+  if(!cambios.length) return 0;
 
-  const prev = btn.textContent;
-  btn.disabled = true;
   let ok = 0;
   for(const mov of cambios){
-    btn.textContent = `Aplicando… ${ok + 1}/${cambios.length}`;
+    if(onProgreso) onProgreso(ok + 1, cambios.length);
     try{
       await api({action:"saveMovimiento", mov:{...mov, hash:""}});
       const i = state.movimientos.findIndex(x => x.id === mov.id);
@@ -2179,8 +2392,19 @@ async function aplicarReglasPendientes(btn){
       state.reglas = (d.reglas || []).filter(r => r.activo !== false);
     }catch(e){ /* secundario */ }
   }
+  return ok;
+}
 
+/** Botón "Aplicar reglas a los sin categoría" de la pantalla Movimientos. */
+async function aplicarReglasPendientes(btn){
+  const prev = btn.textContent;
+  btn.disabled = true;
+  const ok = await aplicarReglasA(
+    state.movimientos.filter(m => !m.categoria && m.tipo !== "Interno"),
+    (n, total) => { btn.textContent = `Aplicando… ${n}/${total}`; }
+  );
   btn.disabled = false; btn.textContent = prev;
+  if(!ok){ toast("Ninguna regla aplica a los movimientos sin categoría"); return; }
   render();
   toast(`${ok} ${ok === 1 ? "movimiento categorizado" : "movimientos categorizados"}`);
 }
@@ -2371,9 +2595,39 @@ function modalMovimiento(id){
       cont.innerHTML = `<p class="hint" style="margin:6px 0 0">✨ Categoría sugerida por la regla «${esc(r.patron)}».</p>`;
       return;
     }
+    const yaAbierto = !!$("#mCrearRegla") && $("#mCrearRegla").checked;
+    if(yaAbierto) return;                       // no pisamos el editor mientras lo estás usando
     const patron = patronDesde(concepto);
     if(!patron){ cont.innerHTML = ""; return; }
-    cont.innerHTML = `<label class="check" style="margin:8px 0 0;font-size:13px"><input type="checkbox" id="mCrearRegla"> Crear regla: «${esc(patron)}» → ${esc((catPorId(cat) || {}).nombre || "")}</label>`;
+    cont.innerHTML = `<label class="check" style="margin:8px 0 0;font-size:13px"><input type="checkbox" id="mCrearRegla"> Crear una regla a partir de este movimiento</label><div id="editorRegla"></div>`;
+    $("#mCrearRegla").onchange = e => {
+      $("#editorRegla").innerHTML = e.target.checked ? editorReglaManual(patron, cat) : "";
+    };
+  }
+
+  /* Mismo editor que en la importación: patrón, match, categoría, tipo y prioridad. */
+  function editorReglaManual(patron, cat){
+    return `
+    <div class="reglaform" style="margin-top:8px">
+      <label>El concepto
+        <select id="rgMatch">${TIPOS_PATRON.map(t => `<option value="${t.v}">${t.l}</option>`).join("")}</select>
+      </label>
+      <label>Patrón
+        <input type="text" id="rgPatron" value="${esc(patron)}" autocomplete="off">
+      </label>
+      <label>Categoría
+        <select id="rgCat">
+          <option value="">— ninguna —</option>
+          ${state.categorias.map(c => `<option value="${esc(c.id)}" ${cat === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Forzar tipo
+        <select id="rgTipo"><option value="">— no —</option>${TIPOS_MOV.map(t => `<option value="${t}">${t}</option>`).join("")}</select>
+      </label>
+      <label>Prioridad
+        <input type="number" step="1" style="width:70px" id="rgPrio" value="10">
+      </label>
+    </div>`;
   }
   $("#mConcepto").oninput = () => { sugerirCategoria(); refrescarRegla(); };
   $("#mCategoria").onchange = refrescarRegla;
@@ -2423,7 +2677,15 @@ function modalMovimiento(id){
     };
 
     const chkRegla = $("#mCrearRegla");
-    const crearRegla = !!(chkRegla && chkRegla.checked);
+    // Capturamos la regla antes de cerrar el modal
+    const reglaNueva = (chkRegla && chkRegla.checked && $("#rgPatron")) ? {
+      patron: $("#rgPatron").value.trim(),
+      tipoPatron: $("#rgMatch").value,
+      categoria: $("#rgCat").value,
+      tipo: $("#rgTipo").value,
+      prioridad: parseInt($("#rgPrio").value, 10) || 10
+    } : null;
+    if(reglaNueva && !reglaNueva.patron){ toast("La regla necesita un patrón"); $("#rgPatron").focus(); return; }
 
     b.disabled = true; b.textContent = "Guardando…";
     try{
@@ -2437,7 +2699,7 @@ function modalMovimiento(id){
       cerrar();
       render();
       toast(m ? "Movimiento actualizado" : "Movimiento guardado");
-      if(crearRegla) await crearReglaDesde(concepto, categoria);
+      if(reglaNueva) await guardarReglaNueva(reglaNueva);
     }catch(e){
       toast(e.message);
       b.disabled = false; b.textContent = "Guardar";
@@ -2984,15 +3246,24 @@ async function borrarRegla(id){
   }catch(e){ toast(e.message); }
 }
 
-/** Crea una regla a partir de un movimiento recién categorizado. */
-async function crearReglaDesde(concepto, categoria){
-  const patron = patronDesde(concepto);
-  if(!patron || !categoria) return;
-  if(state.reglas.some(r => r.patron.toLowerCase() === patron && r.categoria === categoria)) return;
-  const regla = {id:uid(), patron, tipoPatron:"contiene", categoria, tipo:"", prioridad:10, hits:0, activo:true};
+/** Guarda una regla armada en el editor del formulario manual. */
+async function guardarReglaNueva(datos){
+  const patron = String(datos.patron || "").trim();
+  if(!patron || (!datos.categoria && !datos.tipo)) return;
+  const repetida = state.reglas.some(r =>
+    r.patron.toLowerCase() === patron.toLowerCase() &&
+    r.categoria === datos.categoria && r.tipoPatron === datos.tipoPatron);
+  if(repetida){ toast(`Ya existe una regla para «${patron}»`); return; }
+  const regla = {
+    id: uid(), patron,
+    tipoPatron: datos.tipoPatron || "contiene",
+    categoria: datos.categoria || "", tipo: datos.tipo || "",
+    prioridad: +datos.prioridad || 10, hits: 0, activo: true
+  };
   try{
     await api({action:"saveRegla", regla});
     state.reglas.push(regla);
+    state.reglas.sort((a,z) => ((+z.prioridad||0)-(+a.prioridad||0)) || a.patron.localeCompare(z.patron, "es"));
     toast(`Regla creada: «${patron}»`);
   }catch(e){ toast(e.message); }
 }

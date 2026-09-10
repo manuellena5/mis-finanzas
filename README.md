@@ -17,6 +17,7 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | 5 | Patrimonio: composición por moneda y por tipo, detalle por cuenta | ✅ Completa |
 | 6 | Inversiones: ABM de tenencias y su aporte al patrimonio | ✅ Completa |
 | 7 | Importación de resúmenes de tarjeta (.xlsx) + reglas de categorización | ✅ Completa |
+| 7.1 | Preview de importación editable (dos fechas por fila) + reglas por fila | ✅ Completa |
 | 8 | Resúmenes de tarjeta en PDF (Santander Visa/Amex) | ✅ Completa |
 | 9 | Lente por consumo / por resumen (dos fechas por movimiento) | ✅ Completa |
 | — | PDF de caja de ahorro, PPI y Balanz, y MercadoPago | ⏳ Pendiente |

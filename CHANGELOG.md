@@ -1,5 +1,27 @@
 # Changelog
 
+## Fase 7.1 — Preview de importación editable y reglas por fila (2026-09-10) ✅
+
+Revisión del prompt de la Fase 7 con una previsualización más completa. Todo lo demás de esa fase (columnas `Hash` / `Fuente` / `FechaResumen`, dedupe, motor de reglas, ABM, `saveMovimientos` en lote) ya estaba: esta entrada cubre sólo el delta. **Sólo frontend, no requiere re-deploy.**
+
+**Las dos fechas, editables**
+- La preview tiene ahora una columna **Fecha consumo** y otra **Fecha resumen**, editables por fila.
+- Arriba, un campo **Fecha de resumen (cierre)** prellenado con el cierre que trae el archivo funciona de atajo: se aplica a todas las líneas de una, y después se corrige la que haga falta. Al lado se muestran el período (derivado) y el vencimiento.
+- Editar la fecha de consumo recalcula el `Hash` de esa fila y vuelve a chequear duplicados al instante.
+
+**Reglas por fila, con editor inline**
+- Cada fila tiene su propio checkbox **Regla**. Al tildarlo se despliega debajo un mini-editor prellenado desde ese movimiento: patrón (derivado del concepto), tipo de match, categoría, forzar tipo y prioridad — todo editable ahí mismo.
+- Mientras escribís el patrón, **se resaltan las otras filas del resumen que ese patrón también matchearía**, y un contador dice a cuántas alcanza. Si queda vacío, avisa que esa regla no se va a crear.
+- Son independientes: dos filas con regla producen dos reglas distintas. Reemplaza al checkbox único global de la versión anterior.
+- Al confirmar: se guardan los movimientos, después las reglas nuevas en lote, y **se reaplica el engine** a lo importado que quedó sin categoría. El toast informa las tres cosas.
+
+**Formulario manual**
+El checkbox "Crear regla" ahora abre el mismo editor (patrón, match, categoría, tipo, prioridad) en vez de crear una regla fija derivada del concepto.
+
+**Detalle de implementación**: la preview pasó a actualizarse **por partes** en vez de repintar el modal entero. Con el repintado anterior, un input de fecha o de patrón perdía el foco a mitad de la edición.
+
+**Verificado** en el navegador con un resumen `.xlsx` generado al vuelo: las 8 columnas con las dos fechas por fila; el atajo de cierre aplicando `2026-08-02` a las 8 líneas y recalculando el período a `2026-07`; el editor inline abriendo con patrón prellenado y foco puesto; al cambiar el patrón a `merpago` se resaltó la fila correspondiente **sin perder el foco**; dos reglas independientes (`youtube → Suscripciones`, `coto → Supermercado`) creadas en una sola importación, con el engine reaplicado (`Importados 8 · 2 reglas creadas · 2 categorizados por las reglas`); una fecha de consumo editada a mano hizo que esa línea **no** se marcara como duplicada al reimportar, mientras las otras 7 sí. En el alta manual, el editor guardó `farmacity` / *empieza con* / prioridad 20 tal cual, y el movimiento quedó con `FechaResumen = Fecha`. Sin errores de consola; en 375px la tabla scrollea sola sin arrastrar la página.
+
 ## Fase 9 — Lente por consumo / por resumen (2026-08-28) ✅
 
 Un toggle que cambia con qué fecha se agrupan los meses, para responder dos preguntas distintas: *¿qué gasto me impacta este mes?* y *¿en qué mes compré?*.
