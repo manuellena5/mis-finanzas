@@ -30,6 +30,10 @@
    al final del array de columnas. Nunca reordenar.
 ═══════════════════════════════════════════════════════════════ */
 
+/* Versión del proyecto. Se sube en cada cambio, acá y en index.html / sw.js, para
+   poder ver desde la app si el backend publicado está al día. */
+const VERSION = "10.2";
+
 const CUENTAS_SHEET = "Cuentas";
 const CONFIG_SHEET  = "Config";
 const MOV_SHEET     = "Movimientos";
@@ -117,7 +121,7 @@ function doGet(e) {
   return jsonResponse({
     ok: true,
     msg: "Mis Finanzas API activa",
-    version: "fase9",
+    version: VERSION,
     auth: "token",
     tokenConfigurado: !!getToken()
   });
@@ -190,6 +194,7 @@ function handleBootstrap() {
     movimientos: listMovimientos(),
     inversiones: listInversiones(),
     reglas:      listReglas(),
+    version:     VERSION,
     config:      getConfig()
   };
 }

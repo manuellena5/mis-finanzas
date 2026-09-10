@@ -38,6 +38,8 @@ button,input,select,textarea{font-family:inherit}
 .brand{font-weight:700;font-size:19px;letter-spacing:-.5px;line-height:1.1}
 .brand span{color:var(--green)}
 .brand small{display:block;font-size:11px;color:var(--faint);font-weight:400;letter-spacing:0;margin-top:2px}
+.brand small .ver{color:var(--muted);background:#f1f5f9;border-radius:6px;padding:1px 5px;font-family:'DM Mono',ui-monospace,monospace;font-size:10px}
+.brand small .ver.alerta{background:var(--danger-bg);color:var(--danger);font-weight:600}
 .topbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .curtoggle{display:inline-flex;background:#f1f5f9;border:1px solid var(--line);border-radius:20px;padding:2px}
 .curtoggle button{border:none;background:none;padding:5px 11px;border-radius:18px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer}
@@ -283,6 +285,12 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 
 <script>
 /* ══════════════════════ CONSTANTES ══════════════════════ */
+/* Versión del proyecto: se sube en CADA cambio y tiene que quedar igual en los
+   tres lados — acá, en sw.js (nombre del cache) y en Code.gs (const VERSION).
+   La app compara la suya con la que publica el backend, así se ve de un vistazo
+   si falta pushear el front o re-deployar el Apps Script. */
+const APP_VERSION = "10.2";
+const APP_FECHA   = "2026-09-10";
 const TABS = [
   {id:"resumen",     label:"Resumen",     ic:"📊", fase:4},
   {id:"movimientos", label:"Movimientos", ic:"💸", fase:2},
@@ -357,6 +365,7 @@ const state = {
   filtroBroker: "",                                           // filtro de la pantalla Inversiones
   filtros:  {tipo:"todos", cuenta:"", categoria:"", texto:""},
   config:   {},
+  backendVersion: "",                                         // la que publica el Apps Script
   conectado: false,
   cargando:  false,
   error:     ""
@@ -1215,6 +1224,7 @@ async function bootstrap(silent){
     state.inversiones = (d.inversiones || []).map(i => ({...i, fecha:isoDate(i.fecha)}));
     state.reglas      = (d.reglas || []).filter(r => r.activo !== false);
     state.config      = d.config || {};
+    state.backendVersion = d.version || "";
     state.conectado = true;
     if(!silent){ const n = cuentasActivas().length; toast("Conectado · " + n + (n === 1 ? " cuenta" : " cuentas")); }
     return true;
@@ -1253,10 +1263,13 @@ function renderCurToggle(){
 
 function renderBrandSub(){
   const s = $("#brandSub");
-  if(!state.url || !state.token) s.textContent = "sin conectar";
-  else if(state.cargando) s.textContent = "cargando…";
-  else if(state.conectado){ const n = cuentasActivas().length; s.textContent = n + (n === 1 ? " cuenta" : " cuentas"); }
-  else s.textContent = "sin conexión";
+  let txt;
+  if(!state.url || !state.token) txt = "sin conectar";
+  else if(state.cargando) txt = "cargando…";
+  else if(state.conectado){ const n = cuentasActivas().length; txt = n + (n === 1 ? " cuenta" : " cuentas"); }
+  else txt = "sin conexión";
+  const desfasado = state.backendVersion && state.backendVersion !== APP_VERSION;
+  s.innerHTML = `${esc(txt)} <span class="ver${desfasado ? " alerta" : ""}" title="App v${esc(APP_VERSION)} · ${esc(APP_FECHA)}${desfasado ? ` — el backend publicado es v${esc(state.backendVersion)}` : ""}">v${esc(APP_VERSION)}${desfasado ? " ⚠" : ""}</span>`;
 }
 
 /* ══════════════════════ RENDER ══════════════════════ */
@@ -3430,7 +3443,8 @@ function viewAjustes(){
     ${cardCuentas()}
     ${cardCategorias()}
     ${cardModosPago()}
-    ${cardReglas()}`;
+    ${cardReglas()}
+    ${cardVersion()}`;
 }
 
 function cardConexion(){
@@ -3790,6 +3804,56 @@ async function cargarSugeridos(que, btn){
   }
 }
 
+/** Qué versión corre en este navegador y cuál publica el backend. */
+function cardVersion(){
+  const back = state.backendVersion;
+  const estado = !state.conectado ? `<span class="tag">sin conectar</span>`
+    : !back ? `<span class="tag off">no informa versión</span>`
+    : back === APP_VERSION ? `<span class="tag ok">al día</span>`
+    : `<span class="tag off">desactualizado</span>`;
+  return `
+  <div class="card">
+    <div class="card-head"><h3>Versión</h3>${estado}</div>
+    <div style="margin-top:8px">
+      <div class="item">
+        <span class="nm">App <span style="color:var(--faint);font-weight:400">(este navegador)</span></span>
+        <span class="num" style="font-weight:600">v${esc(APP_VERSION)}</span>
+      </div>
+      <div class="item">
+        <span class="nm">Backend <span style="color:var(--faint);font-weight:400">(Apps Script publicado)</span></span>
+        <span class="num" style="font-weight:600">${back ? "v" + esc(back) : "—"}</span>
+      </div>
+    </div>
+    <p class="hint" style="margin:10px 0 0">${
+      !state.conectado ? "Conectate para ver la versión del backend."
+      : !back ? "Tu backend es anterior a la v10.2: pegá el <b>Code.gs</b> nuevo y re-deployá para que informe su versión."
+      : back === APP_VERSION ? "El front y el backend están en la misma versión."
+      : `El backend publicado está en <b>v${esc(back)}</b>: pegá el <b>Code.gs</b> nuevo y re-deployá como <i>nueva versión</i>.`
+    }</p>
+    <div class="btn-row">
+      <button class="btn ghost sm" id="btnActualizar">Buscar actualizaciones</button>
+    </div>
+    <p class="hint" style="margin:8px 0 0">Fuerza a la app a descartar lo cacheado y recargar. Útil si pusheaste cambios y seguís viendo los viejos.</p>
+  </div>`;
+}
+
+/** Descarta el cache del service worker y recarga con lo último publicado. */
+async function buscarActualizaciones(btn){
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = "Buscando…";
+  try{
+    if("serviceWorker" in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.update()));
+    }
+    if(window.caches){
+      const claves = await caches.keys();
+      await Promise.all(claves.map(k => caches.delete(k)));
+    }
+  }catch(e){ /* si el navegador no deja, igual recargamos */ }
+  location.reload();
+}
+
 /* ── ABM Reglas ── */
 const TIPOS_PATRON = [
   {v:"contiene", l:"contiene"},
@@ -4071,6 +4135,9 @@ function bindAjustes(){
   if(nuevaRegla) nuevaRegla.onclick = () => modalRegla(null);
   $$("[data-editregla]").forEach(b => b.onclick = () => modalRegla(b.dataset.editregla));
   $$("[data-delregla]").forEach(b => b.onclick = () => borrarRegla(b.dataset.delregla));
+  const btnAct = $("#btnActualizar");
+  if(btnAct) btnAct.onclick = ev => buscarActualizaciones(ev.currentTarget);
+
   const seedReglas = $("#btnSeedReglas");
   if(seedReglas) seedReglas.onclick = ev => cargarReglasSugeridas(ev.currentTarget);
 

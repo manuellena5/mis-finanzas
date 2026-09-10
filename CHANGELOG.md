@@ -1,5 +1,21 @@
 # Changelog
 
+## v10.2 — Versión visible (2026-09-10) ✅
+
+Un número de versión a la vista, para saber si el navegador está corriendo lo último y si el backend está al día. **Toca `Code.gs`: requiere re-deploy** (una vez; después el propio cartel avisa cuando haga falta).
+
+**Una sola versión, en tres archivos**
+`APP_VERSION` en `index.html`, `APP_VERSION` en `sw.js` (de ahí sale el nombre del cache) y `VERSION` en `Code.gs`. Se suben juntas en cada cambio. Como el nombre del cache incluye la versión, publicar una nueva **descarta sola la anterior**.
+
+**Dónde se ve**
+- En el **header**, al lado del nombre: `v10.2`. Si el backend publicado informa otra versión, el chip se pone rojo con un ⚠ y el tooltip dice cuál tiene.
+- En **Ajustes → Versión**: las dos versiones lado a lado (app y backend) con un estado — *al día*, *desactualizado* o *no informa versión* — y la instrucción concreta de qué hacer en cada caso.
+- El backend devuelve su versión tanto en el chequeo de salud de `doGet` como dentro de `bootstrap`, así que la app la tiene sin pedir nada extra.
+
+**Botón "Buscar actualizaciones"**: fuerza al service worker a buscar una versión nueva, borra los caches y recarga. Es la salida cuando pusheaste cambios y el navegador sigue mostrando los viejos.
+
+**Verificado**: con el backend en la misma versión el chip queda neutro y la tarjeta dice "al día"; con el backend en v9 aparece el ⚠, el tooltip y la instrucción de re-deployar; con un backend anterior a la v10.2 (que no informa versión) explica que hay que actualizarlo. El botón borró el cache y recargó, y al volver la app quedó en v10.2 con el cache regenerado — de hecho, durante la prueba el servidor local se cayó y el service worker sirvió todo desde el cache viejo: exactamente el caso que esto ahora deja a la vista. Sin errores de consola y sin scroll horizontal en 375px.
+
 ## Fase 10.1 — Modal de importación grande + Internos a mano (2026-09-10) ✅
 
 Dos ajustes sobre la previsualización de importación. **Sólo frontend.**
