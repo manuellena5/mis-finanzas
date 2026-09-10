@@ -1,5 +1,25 @@
 # Changelog
 
+## Fase 10.1 — Modal de importación grande + Internos a mano (2026-09-10) ✅
+
+Dos ajustes sobre la previsualización de importación. **Sólo frontend.**
+
+**El modal usa la pantalla**
+- Pasa a `min(1500px, 96vw)` × `92vh` con layout en columna: la cabecera (mapeo de cuentas y solapas) arriba, la **tabla scrollea adentro** y el pie con el contador y el botón **Importar** queda pineado abajo, siempre visible. Todo con flexbox, sin `position:fixed`.
+- Con ese ancho la tabla **entra sin scroll horizontal en desktop**: las columnas fijas se ajustan a su contenido y el concepto se queda con el resto. En mobile la tabla sigue scrolleando de costado, pero la página no.
+- Sólo aplica al modal de importación; el resto queda igual.
+
+**Marcar un movimiento como Interno**
+- Cada fila tiene ahora una columna **Tipo** con `Ingreso` / `Egreso` / `Interno`. Al elegir Interno se despliega debajo un editor con **Sale de** y **Entra en**, que listan **todas** las cuentas de la app (la contraparte puede no estar en el resumen: MercadoPago, por ejemplo).
+- **Prellenado por el signo**: si la plata entró, el destino ya viene puesto en la cuenta del resumen y sólo elegís el origen; si salió, al revés.
+- Si las dos cuentas son de la misma moneda, `montoDestino` se completa solo. Si son de distinta, aparece **Monto que entra** y se muestra el **tipo de cambio implícito**, con el mismo helper que el alta manual (`tcImplicito`).
+- **Validación por fila**: sin origen, sin destino, origen igual a destino o monto que entra en cero, la fila se marca en rojo, el editor dice qué falta y el confirmar se bloquea con ese mismo mensaje.
+- La fila se muda a la solapa **Internos / transferencias** y la app te lleva ahí para completarla. Se guarda como **un solo movimiento** con las dos patas, sin categoría, y queda neutro en los totales del mes.
+
+**Bug corregido (venía de la Fase 10)**: al marcar una fila como Interno cambia su cuenta de origen, y como el `Hash` incluye la cuenta, al reimportar el mismo PDF esa fila ya no se reconocía y **se duplicaba**. La detección de duplicados de la preview ahora usa además una clave sin la cuenta (fecha + importe + concepto), así que sobrevive a que cambies el tipo, el origen o el mapeo entre importaciones.
+
+**Verificado con el resumen real**: modal 1382×828 sobre 1440×900 (96% × 92%), tabla scrolleando adentro sin scroll horizontal y pie visible; en 375px el modal mide 360×747, la página no scrollea de costado y el botón queda a la vista. Una "Transferencia recibida" de $289.073,15 convertida a Interno con origen MercadoPago quedó guardada como **MercadoPago → Santander Caja de Ahorro**, sin categoría, con `0` ingresos de ese monto y los saldos moviéndose en las dos cuentas (MercadoPago $500.000 → $210.926,85). Un interno en dólares hacia una cuenta en pesos pidió el monto que entra y mostró el TC implícito. Las cuatro validaciones bloquean el confirmar. Reimportar el mismo PDF: 68/68 duplicadas, incluida la convertida a Interno. Sin errores de consola.
+
 ## Fase 10 — Resumen de cuenta Santander (multi-cuenta + tarjetas embebidas) (2026-09-10) ✅
 
 Un solo PDF del homebanking trae la caja de ahorro en pesos, la cuenta corriente, la caja de ahorro en dólares y, al final, los resúmenes de las dos tarjetas. Ahora se importa todo junto. **Sólo frontend, no requiere re-deploy.**

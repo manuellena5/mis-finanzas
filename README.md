@@ -21,6 +21,7 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | 8 | Resúmenes de tarjeta en PDF (Santander Visa/Amex) | ✅ Completa |
 | 9 | Lente por consumo / por resumen (dos fechas por movimiento) | ✅ Completa |
 | 10 | Resumen de cuenta Santander: multi-cuenta, tarjetas embebidas e internos | ✅ Completa |
+| 10.1 | Modal de importación a pantalla completa + marcar Internos a mano | ✅ Completa |
 | — | PPI, Balanz y MercadoPago | ⏳ Pendiente |
 
 Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.

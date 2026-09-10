@@ -195,6 +195,19 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 
 /* Importación */
 .modal.wide{max-width:940px}
+
+/* Preview de importación: ocupa casi toda la pantalla, con la tabla scrolleando
+   adentro y el botón de confirmar siempre visible abajo. */
+.modal.imp{width:min(1500px,96vw);max-width:none;height:92vh;max-height:92vh;display:flex;flex-direction:column;padding:16px 0 0}
+.modal.imp > .impHead{padding:0 18px;flex-shrink:0;overflow:auto;max-height:42vh}
+.modal.imp > .impTabla{flex:1;min-height:0;min-width:0;display:flex;padding:0 18px}
+.modal.imp > .impTabla > .tblwrap{min-width:0;flex:1}
+.modal.imp > .impPie{flex-shrink:0;border-top:1px solid var(--line);padding:12px 18px calc(14px + env(safe-area-inset-bottom));background:var(--card)}
+.modal.imp .tblwrap{max-height:none;height:100%;width:100%;margin-top:0}
+.modal.imp .btn-row{margin-top:8px}
+/* Con el modal ancho la tabla entra sin scroll: el concepto se queda con el resto */
+.modal.imp .tbl th,.modal.imp .tbl td{white-space:nowrap;width:1%}
+.modal.imp .tbl th.flex,.modal.imp .tbl td.flex{white-space:normal;width:100%;min-width:220px}
 .drop{border:2px dashed var(--line);border-radius:12px;padding:26px 16px;text-align:center;color:var(--muted);cursor:pointer;background:#f8fafc}
 .drop.over{border-color:var(--green);background:var(--green-bg);color:var(--green)}
 .drop .big{font-size:26px;display:block;margin-bottom:6px}
@@ -206,6 +219,8 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .tbl tr.matchea td{background:#0F51320d}
 .tbl input[type=date]{padding:4px 6px;border:1px solid var(--line);border-radius:7px;font-size:11.5px;background:#fff;color:var(--ink);font-family:'DM Mono',ui-monospace,monospace}
 .tbl tr.reglaEd td{background:var(--green-bg);border-bottom:1px solid var(--green-line)}
+.tbl tr.conError td{background:var(--danger-bg)}
+.tbl select{max-width:170px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;font-size:12px;background:#fff;color:var(--ink)}
 .reglaform{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:4px 0}
 .reglaform label{display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .reglaform input,.reglaform select{padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;background:#fff;color:var(--ink);font-weight:400;text-transform:none;letter-spacing:0}
@@ -2100,14 +2115,22 @@ function modalImportar(){
     return est.filas.filter(f => matchRegla(f.concepto, regla)).map(f => f.i);
   }
 
+  /* Clave sin la cuenta: si la fila se marcó como Interno (o se re-mapeó a otra
+     cuenta), su hash cambia y el exacto ya no la reconocería como repetida. */
+  const claveSinCuenta = m => [isoDate(m.fecha), Math.round((+m.monto || 0) * 100),
+                               String(m.concepto || "").toLowerCase().slice(0, 40)].join("|");
+
   /** Recalcula el hash con la cuenta elegida y marca lo que ya está cargado. */
   function revisarDuplicados(){
     const existentes = new Set(state.movimientos.map(m => m.hash || calcHash(m)));
+    const sinCuenta  = new Set(state.movimientos.map(claveSinCuenta));
     for(const f of est.filas){
       f.cuenta = est.modo === "cuenta" ? cuentaDeGrupo(f.grupo)
                                        : (f.moneda === "USD" ? est.cuentaUsd : est.cuentaArs);
-      f.hash = calcHash({fecha:f.fecha, monto:f.monto, concepto:f.concepto, cuenta:f.cuenta});
-      f.dup = existentes.has(f.hash);
+      // En un interno, el movimiento se guarda en la cuenta de origen
+      const cuentaHash = f.tipo === "Interno" ? (origenDeFila(f) || f.cuenta) : f.cuenta;
+      f.hash = calcHash({fecha:f.fecha, monto:f.monto, concepto:f.concepto, cuenta:cuentaHash});
+      f.dup = existentes.has(f.hash) || sinCuenta.has(claveSinCuenta(f));
       if(f.dup) f.sel = false;
     }
   }
@@ -2118,6 +2141,86 @@ function modalImportar(){
     return `<option value="">— elegir cuenta ${mon} —</option>` + cand.map(c =>
       `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)}${c.tipo === "tarjeta" ? "" : " · " + tipoInfo(c.tipo).l}</option>`).join("");
   }
+
+  /* ── Internos armados a mano ── */
+  /** Origen: la cuenta elegida a mano, o la que sale del mapeo de la fila. */
+  const origenDeFila = f => f.tipo === "Interno" ? (f.origenManual ? (f.origenId || "") : f.cuenta) : f.cuenta;
+  const destinoDeFila = f => f.destinoManual ? (f.destinoId || "") : (f.destinoGrupo ? cuentaDeGrupo(f.destinoGrupo) : "");
+  const monedaDeCuenta = id => monedaCuenta(id);
+
+  /** Monto que entra: igual al que sale si las dos cuentas son de la misma moneda. */
+  function montoDestinoDe(f){
+    const org = origenDeFila(f), dst = destinoDeFila(f);
+    if(!org || !dst) return null;
+    if(monedaDeCuenta(org) === monedaDeCuenta(dst)) return f.monto;
+    return f.montoDestino != null ? f.montoDestino : null;
+  }
+
+  /** Qué le falta a una fila Interno para poder importarse. */
+  function faltaInterno(f){
+    if(f.tipo !== "Interno") return "";
+    const org = origenDeFila(f), dst = destinoDeFila(f);
+    if(!org) return "Falta la cuenta de origen";
+    if(!dst) return "Falta la cuenta destino";
+    if(org === dst) return "Origen y destino tienen que ser distintos";
+    if(!(montoDestinoDe(f) > 0)) return "Falta el monto que entra";
+    return "";
+  }
+
+  function cambiarTipoFila(i, nuevo){
+    const f = est.filas[i];
+    if(nuevo === "Interno"){
+      // Prellenado por el signo: lo que entró ya tiene destino; lo que salió, origen
+      const propia = f.cuenta;
+      if(f.tipo === "Ingreso"){ f.destinoId = propia; f.origenId = ""; }
+      else { f.origenId = propia; f.destinoId = ""; }
+      f.origenManual = true; f.destinoManual = true;
+      f.categoria = ""; f.nuevaRegla = null; f.montoDestino = null;
+      // La fila se muda a la solapa de internos: vamos con ella para completarla
+      if(est.modo === "cuenta") est.solapa = GRUPO_INTERNOS;
+    }else{
+      f.origenId = ""; f.destinoId = ""; f.destinoGrupo = "";
+      f.origenManual = false; f.destinoManual = false; f.montoDestino = null;
+    }
+    f.tipo = nuevo;
+    revisarDuplicados();
+    pintar();
+  }
+
+  /** Editor inline de un Interno: origen, destino y —si cambian de moneda— el monto que entra. */
+  function editorInterno(f){
+    const org = origenDeFila(f), dst = destinoDeFila(f);
+    const opciones = (sel) => `<option value="">— elegir —</option>` + cuentasActivas().map(c =>
+      `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)} · ${esc(c.moneda)}</option>`).join("");
+    const cambio = org && dst && monedaDeCuenta(org) !== monedaDeCuenta(dst);
+    const tc = cambio ? tcImplicito({ monto:f.monto, montoDestino:f.montoDestino,
+                                      moneda:monedaDeCuenta(org), monedaDestino:monedaDeCuenta(dst) }) : 0;
+    const falta = faltaInterno(f);
+    return `
+    <tr class="reglaEd" data-internoed="${f.i}">
+      <td></td>
+      <td colspan="${colsTabla() - 1}">
+        <div class="reglaform">
+          <label>Sale de
+            <select data-origen="${f.i}">${opciones(org)}</select>
+          </label>
+          <label>Entra en
+            <select data-destinoc="${f.i}">${opciones(dst)}</select>
+          </label>
+          ${cambio ? `
+          <label>Monto que entra (${esc(monedaDeCuenta(dst))})
+            <input type="number" step="0.01" min="0" style="width:130px" data-mdest="${f.i}" value="${f.montoDestino != null ? esc(f.montoDestino) : ""}">
+          </label>` : ""}
+          <span class="rinfo ${falta ? "vacio" : ""}">${falta ? esc(falta)
+            : cambio ? (tc ? `Tipo de cambio implícito: $${nf(tc, 2)} por USD` : "Cargá el monto que entra")
+            : `Entra ${fmt(f.monto, f.moneda)} en la cuenta destino`}</span>
+        </div>
+      </td>
+    </tr>`;
+  }
+
+  /** Cantidad de columnas de la tabla según el modo. */
+  const colsTabla = () => est.modo === "cuenta" ? 10 : 9;
 
   /** Una fila de la previsualización, con sus dos fechas editables. */
   function filaPreview(f){
@@ -2137,22 +2240,23 @@ function modalImportar(){
         ${est.detectadas.map(d => `<option value="${esc(d.clave)}" ${f.grupo === d.clave ? "selected" : ""}>${esc(d.nombre)}</option>`).join("")}
       </select></td>` : "";
 
-    // Los internos no llevan categoría: en su lugar se elige la cuenta destino
+    // Los internos no llevan categoría: se editan con el bloque de abajo
     const celdaCat = esInterno
-      ? `<td><select data-destino="${f.i}">
-           <option value="">— destino —</option>
-           ${est.detectadas.filter(d => d.clave !== f.grupo).map(d =>
-             `<option value="${esc(d.clave)}" ${f.destinoGrupo === d.clave ? "selected" : ""}>→ ${esc(d.nombre)}</option>`).join("")}
-         </select></td>`
+      ? `<td style="color:var(--faint)">${esc(nombreCuenta(destinoDeFila(f)) === "cuenta borrada" ? "—" : "→ " + nombreCuenta(destinoDeFila(f)))}</td>`
       : `<td><select data-cat="${f.i}">${opts}</select></td>`;
 
+    const errorInterno = faltaInterno(f);
+
     return `
-    <tr data-row="${f.i}" class="${f.dup ? "dup" : ""}">
+    <tr data-row="${f.i}" class="${f.dup ? "dup" : ""}${errorInterno ? " conError" : ""}">
       <td><input type="checkbox" data-sel="${f.i}" ${f.sel ? "checked" : ""} ${f.dup ? "disabled" : ""}></td>
       <td><input type="date" data-fecha="${f.i}" value="${esc(f.fecha)}"></td>
       <td><input type="date" data-fres="${f.i}" value="${esc(f.fechaResumen || f.fecha)}"></td>
-      <td>${esc(f.concepto)} ${chips.join(" ")}<span data-dup="${f.i}">${f.dup ? `<span class="tag off">ya está</span>` : ""}</span></td>
+      <td class="flex">${esc(f.concepto)} ${chips.join(" ")}<span data-dup="${f.i}">${f.dup ? `<span class="tag off">ya está</span>` : ""}</span></td>
       ${celdaCuenta}
+      <td><select data-tipo="${f.i}">
+        ${TIPOS_MOV.map(t => `<option value="${t}" ${f.tipo === t ? "selected" : ""}>${t}</option>`).join("")}
+      </select></td>
       <td class="num ${f.tipo === "Ingreso" ? "pos" : esInterno ? "" : "neg"}">${f.tipo === "Ingreso" ? "+" : esInterno ? "" : "−"}${fmt(f.monto, f.moneda)}</td>
       <td><span class="tag ${f.moneda === "USD" ? "usd" : ""}">${f.moneda}</span></td>
       ${celdaCat}
@@ -2167,7 +2271,7 @@ function modalImportar(){
     return `
     <tr class="reglaEd" data-reglaed="${f.i}">
       <td></td>
-      <td colspan="${est.modo === "cuenta" ? 8 : 7}">
+      <td colspan="${colsTabla() - 1}">
         <div class="reglaform">
           <label>El concepto
             <select data-rmatch="${f.i}">
@@ -2260,11 +2364,12 @@ function modalImportar(){
 
     const filasHtml = est.filas
       .filter(f => grupoDeFila(f) === est.solapa && !f.absorbidoPor)
-      .map(f => filaPreview(f) + (f.nuevaRegla ? editorRegla(f) : "")).join("");
+      .map(f => filaPreview(f) + (f.tipo === "Interno" ? editorInterno(f) : "") + (f.nuevaRegla ? editorRegla(f) : "")).join("");
 
     const sinMapear = est.detectadas.filter(d => !d.cuentaApp && usadas.has(d.clave)).length;
 
     return `
+      <div class="impHead">
       <button class="close" id="mClose">×</button>
       <h3>Resumen de cuenta Santander</h3>
       <p class="hint">${esc(est.archivo)} · ${est.detectadas.length} cuentas detectadas · ${est.filas.length} movimientos${est.tarjetas.length ? ` · ${est.tarjetas.length} ${est.tarjetas.length === 1 ? "tarjeta embebida" : "tarjetas embebidas"}` : ""}</p>
@@ -2276,23 +2381,28 @@ function modalImportar(){
       <div class="filtros" style="margin-top:14px">
         ${gs.map(g => `<button class="pill ${est.solapa === g.clave ? "on" : ""}" data-solapa="${esc(g.clave)}">${esc(g.nombre)} · ${g.n}</button>`).join("")}
       </div>
+      </div>
 
+      <div class="impTabla">
       <div class="tblwrap">
         <table class="tbl">
           <thead><tr>
             <th><input type="checkbox" id="selTodos"></th>
-            <th>Fecha consumo</th><th>Fecha resumen</th><th>Concepto</th><th>Cuenta</th>
+            <th>Fecha consumo</th><th>Fecha resumen</th><th class="flex">Concepto</th><th>Cuenta</th><th>Tipo</th>
             <th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría / destino</th><th>Regla</th>
           </tr></thead>
           <tbody>${filasHtml}</tbody>
         </table>
       </div>
 
-      <p class="hint" style="margin:10px 0 0" id="impPie">${textoPie()}</p>
-      ${sinMapear ? `<p class="hint" style="color:var(--danger)">Falta asignar ${sinMapear} ${sinMapear === 1 ? "cuenta" : "cuentas"} antes de importar.</p>` : ""}
+      </div>
 
-      <div class="btn-row" style="margin-top:16px">
-        <button class="btn primary block" id="btnImportar" ${cuentaImportar() && !sinMapear ? "" : "disabled"}>${textoBoton()}</button>
+      <div class="impPie">
+        <p class="hint" style="margin:0" id="impPie">${textoPie()}</p>
+        ${sinMapear ? `<p class="hint" style="color:var(--danger);margin:4px 0 0">Falta asignar ${sinMapear} ${sinMapear === 1 ? "cuenta" : "cuentas"} antes de importar.</p>` : ""}
+        <div class="btn-row">
+          <button class="btn primary block" id="btnImportar" ${cuentaImportar() && !sinMapear ? "" : "disabled"}>${textoBoton()}</button>
+        </div>
       </div>`;
   }
 
@@ -2331,9 +2441,10 @@ function modalImportar(){
       (impuestosArs ? ` · impuestos ${fmt(impuestosArs, "ARS")}` : "") +
       ((pagosArs || pagosUsd) ? ` · pagos ${fmt(pagosArs, "ARS")}${pagosUsd ? " / " + fmt(pagosUsd, "USD") : ""}` : "");
 
-    const filasHtml = est.filas.map(f => filaPreview(f) + (f.nuevaRegla ? editorRegla(f) : "")).join("");
+    const filasHtml = est.filas.map(f => filaPreview(f) + (f.tipo === "Interno" ? editorInterno(f) : "") + (f.nuevaRegla ? editorRegla(f) : "")).join("");
 
     return `
+      <div class="impHead">
       <button class="close" id="mClose">×</button>
       <h3>${esc(est.datos.emisor)}${est.datos.numero ? " ·· " + esc(est.datos.numero) : ""}</h3>
       <p class="hint">${esc(est.archivo)} · ${est.datos.lineas.length} líneas detectadas</p>
@@ -2365,22 +2476,27 @@ function modalImportar(){
         <select class="f" id="impCuentaUsd">${optCuentasTarjeta("USD", est.cuentaUsd)}</select>
         ${!est.cuentaUsd ? `<button class="btn ghost sm" id="btnCrearUsd" style="flex-shrink:0;white-space:nowrap">Crear cuenta USD</button>` : ""}
       </div>` : ""}
+      </div>
 
+      <div class="impTabla">
       <div class="tblwrap">
         <table class="tbl">
           <thead><tr>
             <th><input type="checkbox" id="selTodos" ${aImportar && aImportar === est.filas.filter(f => !f.dup).length ? "checked" : ""}></th>
-            <th>Fecha consumo</th><th>Fecha resumen</th><th>Concepto</th>
+            <th>Fecha consumo</th><th>Fecha resumen</th><th class="flex">Concepto</th><th>Tipo</th>
             <th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría</th><th>Regla</th>
           </tr></thead>
           <tbody>${filasHtml}</tbody>
         </table>
       </div>
 
-      <p class="hint" style="margin:10px 0 0" id="impPie">${textoPie()}</p>
+      </div>
 
-      <div class="btn-row" style="margin-top:16px">
-        <button class="btn primary block" id="btnImportar" ${aImportar ? "" : "disabled"}>${textoBoton()}</button>
+      <div class="impPie">
+        <p class="hint" style="margin:0" id="impPie">${textoPie()}</p>
+        <div class="btn-row">
+          <button class="btn primary block" id="btnImportar" ${aImportar ? "" : "disabled"}>${textoBoton()}</button>
+        </div>
       </div>`;
   }
 
@@ -2436,10 +2552,6 @@ function modalImportar(){
         revisarDuplicados();
         pintar();
       });
-      $$("[data-destino]").forEach(sel => sel.onchange = () => {
-        est.filas[+sel.dataset.destino].destinoGrupo = sel.value;
-        refrescarPie();
-      });
     }else{
       $("#impCuentaArs").onchange = e => { est.cuentaArs = e.target.value; revisarDuplicados(); pintar(); };
       const selUsd = $("#impCuentaUsd");
@@ -2480,6 +2592,24 @@ function modalImportar(){
       const f = est.filas[+inp.dataset.fres];
       f.fechaResumen = inp.value || f.fecha;
       inp.value = f.fechaResumen;
+    });
+
+    // Tipo por fila: pasar a Interno abre el editor de origen/destino
+    $$("[data-tipo]").forEach(sel => sel.onchange = () => cambiarTipoFila(+sel.dataset.tipo, sel.value));
+    $$("[data-origen]").forEach(sel => sel.onchange = () => {
+      const f = est.filas[+sel.dataset.origen];
+      f.origenId = sel.value; f.origenManual = true;
+      revisarDuplicados(); pintar();
+    });
+    $$("[data-destinoc]").forEach(sel => sel.onchange = () => {
+      const f = est.filas[+sel.dataset.destinoc];
+      f.destinoId = sel.value; f.destinoManual = true;
+      pintar();
+    });
+    $$("[data-mdest]").forEach(inp => inp.onchange = () => {
+      const f = est.filas[+inp.dataset.mdest];
+      f.montoDestino = parseFloat(inp.value) || null;
+      pintar();
     });
 
     $$("[data-cat]").forEach(sel => sel.onchange = () => {
@@ -2594,8 +2724,11 @@ function modalImportar(){
         : sel.some(f => f.moneda === "USD" && !f.cuenta) ? "Falta elegir la cuenta en dólares" : "Falta elegir la cuenta de la tarjeta");
       return;
     }
-    const internoSinDestino = sel.find(f => f.tipo === "Interno" && !cuentaDeGrupo(f.destinoGrupo));
-    if(internoSinDestino){ toast(`Elegí la cuenta destino de «${internoSinDestino.concepto.slice(0, 30)}»`); return; }
+    const internoIncompleto = sel.find(f => faltaInterno(f));
+    if(internoIncompleto){
+      toast(`${faltaInterno(internoIncompleto)} en «${internoIncompleto.concepto.slice(0, 30)}»`);
+      return;
+    }
 
     btn.disabled = true; btn.textContent = "Guardando…";
     try{
@@ -2613,14 +2746,15 @@ function modalImportar(){
       for(const f of sel){
         const cot = cots[f.fecha];
         const esInterno = f.tipo === "Interno";
-        const destino = esInterno ? cuentaDeGrupo(f.destinoGrupo) : "";
+        const origen  = esInterno ? origenDeFila(f) : f.cuenta;
+        const destino = esInterno ? destinoDeFila(f) : "";
         movimientos.push({
           id: uid(), mes: mesDe(f.fecha), fecha: f.fecha, tipo: f.tipo,
           categoria: esInterno ? "" : f.categoria, concepto: f.concepto,
-          cuenta: f.cuenta, cuentaDestino: destino,
-          moneda: f.moneda, monto: f.monto,
+          cuenta: origen, cuentaDestino: destino,
+          moneda: esInterno ? monedaCuenta(origen) : f.moneda, monto: f.monto,
           monedaDestino: esInterno ? monedaCuenta(destino) : "",
-          montoDestino: esInterno ? f.monto : null,
+          montoDestino: esInterno ? montoDestinoDe(f) : null,
           cotizacion: cot || null,
           modoPago: (est.modo === "cuenta" ? (f.origen === "tarjeta" ? modoCredito : "") : modoCredito),
           observacion: est.modo === "cuenta" ? (f.observacion || "") : obsTarjeta,
@@ -2712,7 +2846,9 @@ function modalImportar(){
   }
 
   function pintar(){
-    $("#impBody").innerHTML = est.datos ? vistaPreview() : vistaArchivo();
+    const body = $("#impBody");
+    body.className = "modal wide" + (est.datos ? " imp" : "");   // el preview usa el modal grande
+    body.innerHTML = est.datos ? vistaPreview() : vistaArchivo();
     if(est.datos) bindPreview(); else bindArchivo();
   }
   pintar();
