@@ -1,5 +1,27 @@
 # Changelog
 
+## Fase 9 — Lente por consumo / por resumen (2026-08-28) ✅
+
+Un toggle que cambia con qué fecha se agrupan los meses, para responder dos preguntas distintas: *¿qué gasto me impacta este mes?* y *¿en qué mes compré?*.
+
+**Nota de alcance**: la fase estaba planteada como "sólo frontend", pero la columna `FechaResumen` que necesita **no existía** — la Fase 7 la había dejado explícitamente fuera de alcance y el cierre del resumen quedaba sólo como texto en `Observacion`. Así que esta fase también agrega esa columna y **requiere re-deploy** (`version: "fase9"`).
+
+**Backend `Code.gs`**
+- `Movimientos` suma `FechaResumen` **al final** (columna 19). Si no viene, vale la fecha de consumo, así los movimientos manuales tienen las dos iguales y no cambian entre lentes.
+- `completarFechaResumen()`: función para ejecutar **una vez** si ya importaste resúmenes. Completa la columna a partir del período que quedó escrito en `Observacion` ("Resumen 2026-07 · …") usando el día 1 de ese mes: para agrupar por mes es exacto, aunque no sea el día real de cierre (ese sigue en la observación). No pisa las filas que ya la tengan.
+
+**Frontend**
+- `state.lente` (`resumen` | `consumo`, default `resumen`) persistido en `localStorage`.
+- `mesLente(mov)` y `fechaLente(mov)` son ahora el único criterio de agrupación mensual: los usan los totales del mes, el gráfico por categoría, la lista de movimientos y el salto de mes al guardar o importar. Se mantuvo `mesDe(iso)` como helper de cadenas para no cambiarle el significado a una función ya usada en todos lados.
+- Toggle segmentado en Resumen y Movimientos, con una línea que explica la vista activa. Al cambiar de lente, si el mes elegido queda vacío salta solo al último mes con datos.
+- La lista de movimientos ordena y agrupa por la fecha de la lente, y cada fila muestra **la otra fecha** como tag ("consumo 10/04/2026" cuando mirás por resumen, y al revés): así se entiende por qué una compra de abril aparece en agosto.
+- En el detalle de un movimiento con dos fechas distintas se editan las dos ("Fecha consumo" y "Fecha resumen"); en los manuales sigue habiendo una sola y al guardar se igualan.
+- La importación completa `FechaResumen` con el cierre que trae el resumen.
+
+**Lo que NO cambia con la lente**: saldos por cuenta, patrimonio e inversiones. Un saldo es acumulado a hoy y no depende de cómo mires los meses.
+
+**Verificado** con el caso del análisis (nafta del 15/08 en el resumen que cierra el 30/08, y una notebook comprada el 10/04 en 6 cuotas, una por resumen de abril a septiembre): por resumen, agosto da $165.000 y las cuotas se reparten $100.000 por mes de abril a septiembre; por consumo, abril concentra los $600.000 y agosto queda en $65.000. Saldos ($−640.000 la tarjeta) y patrimonio ($475.000) **idénticos** con las dos lentes. Estando en mayo —vacío en la lente por consumo— la app saltó sola a agosto. El movimiento manual cae en agosto en ambas. Editar la fecha de resumen movió el movimiento de agosto a septiembre. Backend: 9 checks contra el mock (columna al final, default, lote, y la migración en sus tres casos). Sin errores de consola ni scroll horizontal en 375px.
+
 ## Fase 8 — Resúmenes de tarjeta en PDF (2026-08-28) ✅
 
 El homebanking de Santander entrega los resúmenes en PDF, así que el mismo modal de importación ahora los acepta. **Sólo frontend**: el backend, la preview, las reglas y `saveMovimientos` se reutilizan sin cambios.

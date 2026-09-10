@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════
    MIS FINANZAS — Google Apps Script (Code.gs)
    Backend de un solo usuario sobre Google Sheets.
-   Hojas: Cuentas, Categorias, ModosPago, Movimientos, Inversiones, Config.
+   Hojas: Cuentas, Categorias, ModosPago, Movimientos, Inversiones, Reglas, Config.
 
    SETUP:
    1. Creá una planilla nueva en Google Sheets (será la base de datos).
@@ -45,10 +45,13 @@ const MODOS_COLS   = ["ID","Nombre","Orden","Activo"];
 
 /* Movimientos: Cuenta, CuentaDestino y Categoria guardan el ID de su ficha
    (así renombrarlas no rompe el historial). ModoPago guarda el nombre.       */
+/* `Fecha` es la fecha de consumo y `FechaResumen` el cierre del resumen que lo
+   factura. En los movimientos manuales coinciden; en los de tarjeta difieren, y
+   por eso las cuotas se reparten mes a mes (lente consumo/resumen). */
 const MOV_COLS = [
   "ID","Mes","Fecha","Tipo","Categoria","Concepto","Cuenta","CuentaDestino",
   "Moneda","Monto","MonedaDestino","MontoDestino","Cotizacion","ModoPago","Observacion","Timestamp",
-  "Hash","Fuente"
+  "Hash","Fuente","FechaResumen"
 ];
 
 /* Reglas de autocategorización por patrón sobre el Concepto. */
@@ -114,7 +117,7 @@ function doGet(e) {
   return jsonResponse({
     ok: true,
     msg: "Mis Finanzas API activa",
-    version: "fase7",
+    version: "fase9",
     auth: "token",
     tokenConfigurado: !!getToken()
   });
@@ -342,7 +345,8 @@ function movToRow(m) {
     String(m.observacion || ""),
     String(m.timestamp || ahoraAR()),
     String(m.hash || calcHash(m)),
-    String(m.fuente || "manual")
+    String(m.fuente || "manual"),
+    formatFecha(m.fechaResumen) || fecha    // sin fecha de resumen, vale la de consumo
   ];
 }
 function rowToMov(r) {
@@ -364,7 +368,8 @@ function rowToMov(r) {
     observacion:   String(r[14] || ""),
     timestamp:     formatFechaHora(r[15]),
     hash:          String(r[16] || ""),
-    fuente:        String(r[17] || "manual")
+    fuente:        String(r[17] || "manual"),
+    fechaResumen:  formatFecha(r[18]) || formatFecha(r[2])
   };
 }
 /** @param {string=} mes "YYYY-MM"; sin mes devuelve todos. */
@@ -672,6 +677,35 @@ function normalizarTimestamps() {
   rng.setNumberFormat("@");
   rng.setValues(vals);
   const msg = "Listo: " + vals.length + " timestamps en hora argentina.";
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * Ejecutar UNA vez si ya importaste resúmenes antes de que existiera la columna
+ * `FechaResumen`: la completa a partir del período que quedó escrito en
+ * `Observacion` ("Resumen 2026-07 · vence …"). Toma el día 1 de ese mes: para
+ * agrupar por mes es exacto, aunque no sea el día real de cierre (ese sigue en
+ * la observación). Los movimientos sin ese texto quedan con su fecha de consumo.
+ */
+function completarFechaResumen() {
+  const sh   = getOrCreateSheet(MOV_SHEET, MOV_COLS);
+  const last = sh.getLastRow();
+  if (last < 2) return "No hay movimientos.";
+  const iFecha = MOV_COLS.indexOf("Fecha");
+  const iObs   = MOV_COLS.indexOf("Observacion");
+  const iFR    = MOV_COLS.indexOf("FechaResumen");
+  const rango  = sh.getRange(2, 1, last - 1, MOV_COLS.length);
+  const filas  = rango.getValues();
+  let completados = 0;
+  for (const f of filas) {
+    if (String(f[iFR] || "").trim()) continue;
+    const m = String(f[iObs] || "").match(/Resumen\s+(\d{4})-(\d{2})/);
+    f[iFR] = m ? `${m[1]}-${m[2]}-01` : formatFecha(f[iFecha]);
+    completados++;
+  }
+  rango.setValues(filas);
+  const msg = "Listo: " + completados + " movimientos con FechaResumen.";
   Logger.log(msg);
   return msg;
 }

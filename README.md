@@ -18,7 +18,8 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 | 6 | Inversiones: ABM de tenencias y su aporte al patrimonio | ✅ Completa |
 | 7 | Importación de resúmenes de tarjeta (.xlsx) + reglas de categorización | ✅ Completa |
 | 8 | Resúmenes de tarjeta en PDF (Santander Visa/Amex) | ✅ Completa |
-| 8.1 | PDF de caja de ahorro, PPI y Balanz, y MercadoPago | ⏳ Pendiente |
+| 9 | Lente por consumo / por resumen (dos fechas por movimiento) | ✅ Completa |
+| — | PDF de caja de ahorro, PPI y Balanz, y MercadoPago | ⏳ Pendiente |
 
 Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 
@@ -55,6 +56,8 @@ Pegá el código, guardá, y después **Implementar → Administrar implementaci
 Si en cambio creás una *implementación nueva*, te da otra URL y la vieja sigue sirviendo el código viejo — el síntoma típico es un error tipo `Accion desconocida: bootstrap`. Para saber qué versión está publicada, abrí tu URL `/exec` en el navegador: el JSON de salud dice `version` y `tokenConfigurado`.
 
 ## Fechas y zona horaria
+
+Cada movimiento guarda dos fechas: **`Fecha`** (el día del consumo) y **`FechaResumen`** (el cierre del resumen que lo factura). En los manuales coinciden; en los de tarjeta difieren, y por eso el toggle **Por resumen / Por consumo** reagrupa los meses sin tocar los datos. Si ya tenías resúmenes importados de antes, ejecutá una vez `completarFechaResumen` desde el editor de Apps Script.
 
 Las fechas se guardan en ISO (`YYYY-MM-DD`) y se muestran como `DD/MM/YYYY`. El `Timestamp` de cada movimiento se guarda en **hora de Buenos Aires** (`2026-08-26 18:40:24`), no en UTC, y lo pone el backend: marca cuándo se cargó y no cambia al editar.
 

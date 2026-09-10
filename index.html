@@ -324,6 +324,7 @@ const state = {
   reglas:     [],
   mes:      "",                                               // "YYYY-MM" que se está mirando
   grafico:  "Egreso",                                         // qué muestra el gráfico del Resumen
+  lente:    localStorage.getItem("mf_lente") || "resumen",    // resumen | consumo (ver mesLente)
   filtroBroker: "",                                           // filtro de la pantalla Inversiones
   filtros:  {tipo:"todos", cuenta:"", categoria:"", texto:""},
   config:   {},
@@ -855,6 +856,59 @@ function ordenarMovs(list){
 /* ── Mes ── */
 const mesActual  = () => todayIso().slice(0,7);
 const mesDe      = iso => String(iso || "").slice(0,7);
+
+/* ── Lente de fechas ──
+   Un consumo de tarjeta tiene dos fechas: la de la compra y la del resumen que
+   la factura. La lente elige con cuál se agrupa por mes.
+   · "resumen" (default): cada cuota cae en el mes en que la pagás — gastos parejos.
+   · "consumo": cada gasto en el mes en que lo hiciste — las cuotas se apilan ahí.
+   En los movimientos manuales las dos fechas coinciden, así que no cambian. */
+const LENTES = [
+  {v:"resumen", l:"Por resumen", ayuda:"Cada cuota cae en el mes del resumen que la factura: es lo que te impacta cada mes."},
+  {v:"consumo", l:"Por consumo", ayuda:"Cada gasto cae en el mes en que lo hiciste: una compra en cuotas se ve entera ahí."}
+];
+const lenteInfo = () => LENTES.find(x => x.v === state.lente) || LENTES[0];
+
+/** Mes (YYYY-MM) con el que se agrupa un movimiento según la lente. */
+function mesLente(mov, lente){
+  const l = lente || state.lente;
+  const f = l === "consumo" ? mov.fecha : (mov.fechaResumen || mov.fecha);
+  return mesDe(isoDate(f));
+}
+
+/** Fecha con la que se ordena y agrupa un movimiento según la lente. */
+function fechaLente(mov, lente){
+  const l = lente || state.lente;
+  return isoDate(l === "consumo" ? mov.fecha : (mov.fechaResumen || mov.fecha));
+}
+
+/** Meses con movimientos en la lente activa, ordenados. */
+function mesesConDatos(lente){
+  return [...new Set(state.movimientos.map(m => mesLente(m, lente)).filter(Boolean))].sort();
+}
+
+/** Al cambiar de lente, si el mes elegido queda vacío saltamos al último con datos. */
+function setLente(lente){
+  state.lente = lente;
+  localStorage.setItem("mf_lente", lente);
+  const meses = mesesConDatos(lente);
+  if(meses.length && !meses.includes(state.mes)) state.mes = meses[meses.length - 1];
+  render();
+}
+
+/** Control segmentado de la lente, con su línea de ayuda. */
+function toggleLente(){
+  return `
+  <div class="lente">
+    <div class="filtros" style="margin-bottom:4px">
+      ${LENTES.map(l => `<button class="pill ${state.lente === l.v ? "on" : ""}" data-lente="${l.v}">${l.l}</button>`).join("")}
+    </div>
+    <p class="hint" style="margin:0 2px 12px">${lenteInfo().ayuda}</p>
+  </div>`;
+}
+function bindLente(){
+  $$("[data-lente]").forEach(b => b.onclick = () => setLente(b.dataset.lente));
+}
 function mesLabel(mes){
   const [y,m] = String(mes).split("-");
   return (MESES[+m - 1] || "") + " " + y;
@@ -888,7 +942,9 @@ async function bootstrap(silent){
     state.cuentas     = ordenarCuentas(d.cuentas || []);
     state.categorias  = (d.categorias || []).filter(c => c.activo !== false);
     state.modosPago   = (d.modosPago || []).filter(m => m.activo !== false);
-    state.movimientos = ordenarMovs((d.movimientos || []).map(m => ({...m, fecha:isoDate(m.fecha)})));
+    state.movimientos = ordenarMovs((d.movimientos || []).map(m => ({
+      ...m, fecha:isoDate(m.fecha), fechaResumen:isoDate(m.fechaResumen || m.fecha)
+    })));
     state.inversiones = (d.inversiones || []).map(i => ({...i, fecha:isoDate(i.fecha)}));
     state.reglas      = (d.reglas || []).filter(r => r.activo !== false);
     state.config      = d.config || {};
@@ -975,7 +1031,7 @@ function viewResumen(){
       </div></div>`;
   }
 
-  const movsMes = state.movimientos.filter(m => mesDe(m.fecha) === state.mes);
+  const movsMes = state.movimientos.filter(m => mesLente(m) === state.mes);
   const p = patrimonio();                       // saldos de hoy, al dólar de hoy
   const saldos = saldosPorCuenta();
   const enPatrimonio = cuentasActivas().filter(c => c.enPatrimonio);
@@ -1001,6 +1057,7 @@ function viewResumen(){
         <button data-mes="1" title="Mes siguiente">›</button>
       </span>
     </div>
+    ${toggleLente()}
     ${bloqueTotales(movsMes)}
     ${cardGrafico(movsMes)}
 
@@ -1068,6 +1125,7 @@ function bindResumen(){
     render();
   });
   $$("[data-graf]").forEach(b => b.onclick = () => { state.grafico = b.dataset.graf; render(); });
+  bindLente();
   const fab = $("#fabNuevo");
   if(fab) fab.onclick = () => modalMovimiento(null);
 }
@@ -1819,6 +1877,7 @@ function modalImportar(){
           moneda: f.moneda, monto: f.monto,
           monedaDestino: "", montoDestino: null,
           cotizacion: cot || null, modoPago: modoCredito, observacion: obs,
+          fechaResumen: meta.cierreIso || f.fecha,   // el cierre del resumen que lo factura
           timestamp: "", hash: f.hash, fuente: "import"
         });
       }
@@ -1834,7 +1893,7 @@ function modalImportar(){
         }
       });
       state.movimientos = ordenarMovs(state.movimientos);
-      if(sel.length) state.mes = mesDe(sel[0].fecha);
+      if(movimientos.length) state.mes = mesLente(movimientos[0]);
 
       await actualizarReglas(sel);
 
@@ -1891,7 +1950,7 @@ function movsVisibles(){
   const f = state.filtros;
   const txt = f.texto.trim().toLowerCase();
   return state.movimientos.filter(m => {
-    if(mesDe(m.fecha) !== state.mes) return false;
+    if(mesLente(m) !== state.mes) return false;
     if(f.tipo !== "todos" && m.tipo !== f.tipo) return false;
     if(f.cuenta && m.cuenta !== f.cuenta && m.cuentaDestino !== f.cuenta) return false;
     if(f.categoria && m.categoria !== f.categoria) return false;
@@ -1919,7 +1978,7 @@ function viewMovimientos(){
   const f = state.filtros;
   const movs = movsVisibles();
   const sinCategoria = state.movimientos.filter(m => !m.categoria && m.tipo !== "Interno").length;
-  const total = state.movimientos.filter(m => mesDe(m.fecha) === state.mes).length;
+  const total = state.movimientos.filter(m => mesLente(m) === state.mes).length;
 
   const pills = ["todos"].concat(TIPOS_MOV).map(t =>
     `<button class="pill ${f.tipo===t?"on":""}" data-ftipo="${t}">${t==="todos"?"Todos":t+"s"}</button>`).join("");
@@ -1938,10 +1997,13 @@ function viewMovimientos(){
     </div></div>`;
   }else{
     let dia = "";
-    lista = movs.map(m => {
-      const hdr = m.fecha !== dia ? (dia = m.fecha, `<div class="diahdr">${dispDate(m.fecha)}</div>`) : "";
-      return hdr + filaMov(m);
-    }).join("");
+    lista = movs.slice()
+      .sort((a,b) => (fechaLente(b) + (b.timestamp || "")).localeCompare(fechaLente(a) + (a.timestamp || "")))
+      .map(m => {
+        const f = fechaLente(m);
+        const hdr = f !== dia ? (dia = f, `<div class="diahdr">${dispDate(f)}</div>`) : "";
+        return hdr + filaMov(m);
+      }).join("");
   }
 
   return `
@@ -1958,6 +2020,7 @@ function viewMovimientos(){
         <button data-mes="1" title="Mes siguiente">›</button>
       </span>
     </div>
+    ${toggleLente()}
     ${state.cur !== "ambas" && !rate() ? `<div class="avisocot">Sin cotización del día: los movimientos usan la que tienen guardada, pero los que no tengan ninguna quedan en su moneda original. Cargala en <b>Ajustes</b>.</div>` : ""}
     ${bloqueTotales(movs)}
     <div class="filtros">${pills}</div>
@@ -1977,6 +2040,10 @@ function filaMov(m){
   if(m.tipo !== "Interno") tags.push(`<span class="tag">${esc(cat ? cat.nombre : "Sin categoría")}</span>`);
   tags.push(`<span class="tag">${esc(m.tipo === "Interno" ? nombreCuenta(m.cuenta) + " → " + nombreCuenta(m.cuentaDestino) : nombreCuenta(m.cuenta))}</span>`);
   if(m.modoPago) tags.push(`<span class="tag">${esc(m.modoPago)}</span>`);
+  // Si las dos fechas difieren, mostramos la que NO se está usando para agrupar
+  if(m.fechaResumen && isoDate(m.fechaResumen) !== isoDate(m.fecha)){
+    tags.push(`<span class="tag">${state.lente === "consumo" ? "resumen " + dispDate(m.fechaResumen) : "consumo " + dispDate(m.fecha)}</span>`);
+  }
 
   let clase = "int", signo = "";
   if(m.tipo === "Ingreso"){ clase = "pos"; signo = "+"; }
@@ -2053,6 +2120,7 @@ function bindMovimientos(){
     render();
   });
   $$("[data-ftipo]").forEach(b => b.onclick = () => { state.filtros.tipo = b.dataset.ftipo; render(); });
+  bindLente();
 
   const txt = $("#fTexto");
   if(txt) txt.oninput = () => {
@@ -2124,6 +2192,8 @@ function modalMovimiento(id){
 
   // Estado local del formulario
   let tipo = m ? m.tipo : "Egreso";
+  // Los de tarjeta traen dos fechas distintas: se editan las dos
+  const dosFechas = !!(m && m.fechaResumen && isoDate(m.fechaResumen) !== isoDate(m.fecha));
 
   // Sólo activas; si el movimiento que se edita usa una archivada, se incluye para no perderla al guardar.
   const usadas = m ? [m.cuenta, m.cuentaDestino].filter(Boolean) : [];
@@ -2145,7 +2215,7 @@ function modalMovimiento(id){
 
       <div class="row2">
         <div>
-          <label class="f" for="mFecha">Fecha</label>
+          <label class="f" for="mFecha">${dosFechas ? "Fecha consumo" : "Fecha"}</label>
           <input class="f" id="mFecha" type="date" value="${m ? esc(isoDate(m.fecha)) : todayIso()}">
         </div>
         <div>
@@ -2156,6 +2226,11 @@ function modalMovimiento(id){
           </div>
         </div>
       </div>
+
+      ${dosFechas ? `
+      <label class="f" for="mFechaResumen">Fecha resumen</label>
+      <input class="f" id="mFechaResumen" type="date" value="${esc(isoDate(m.fechaResumen))}">
+      <p class="hint" style="margin:6px 0 0">Con la lente <b>Por resumen</b> el movimiento cae en el mes de esta fecha; con <b>Por consumo</b>, en el de la de arriba.</p>` : ""}
 
       <label class="f" for="mCuenta"><span id="lblCuenta">Cuenta</span></label>
       <select class="f" id="mCuenta">${optCuentas(m ? m.cuenta : cuentasForm[0].id)}</select>
@@ -2341,6 +2416,7 @@ function modalMovimiento(id){
       modoPago: $("#mModoPago").value,
       observacion: $("#mObservacion").value.trim(),
       // El sello de tiempo lo pone el backend en hora argentina; al editar se conserva.
+      fechaResumen: ($("#mFechaResumen") && $("#mFechaResumen").value) || fecha,
       timestamp: (m && m.timestamp) || "",
       hash: "",                                  // lo recalcula el backend con los valores nuevos
       fuente: (m && m.fuente) || "manual"
@@ -2357,7 +2433,7 @@ function modalMovimiento(id){
       const i = state.movimientos.findIndex(x => x.id === mov.id);
       if(i >= 0) state.movimientos[i] = mov; else state.movimientos.push(mov);
       state.movimientos = ordenarMovs(state.movimientos);
-      state.mes = mov.mes;                       // saltamos al mes del movimiento guardado
+      state.mes = mesLente(mov);                 // saltamos al mes del movimiento guardado
       cerrar();
       render();
       toast(m ? "Movimiento actualizado" : "Movimiento guardado");
