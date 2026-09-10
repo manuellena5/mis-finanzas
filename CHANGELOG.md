@@ -1,5 +1,33 @@
 # Changelog
 
+## Fase 10 — Resumen de cuenta Santander (multi-cuenta + tarjetas embebidas) (2026-09-10) ✅
+
+Un solo PDF del homebanking trae la caja de ahorro en pesos, la cuenta corriente, la caja de ahorro en dólares y, al final, los resúmenes de las dos tarjetas. Ahora se importa todo junto. **Sólo frontend, no requiere re-deploy.**
+
+**Parser bancario multi-cuenta**
+- `pdfLineasItems()` conserva la posición de cada fragmento (antes sólo se guardaba el texto): la sección en pesos tiene una columna por cuenta y sólo la `x` dice de cuál es cada importe.
+- La columna de cada monto se resuelve por su **borde derecho** contra el del encabezado —los importes van alineados a la derecha—, así que funciona sin números mágicos y se adapta solo a la sección en dólares, que tiene otras columnas.
+- La fecha se arrastra, las líneas de contraparte (`A fulano…` / `De fulano…`) se concatenan al concepto, y `Saldo Inicial` se usa como saldo de apertura en vez de importarse como movimiento.
+- **Conciliación**: como el "Saldo en cuenta" del resumen es el acumulado de todas las cuentas de esa moneda, se controla por moneda y se muestra en la preview.
+
+**Tarjetas embebidas**
+Resultó que **no usan el mismo formato que los PDF sueltos de la Fase 8**: dicen `Consumos del mes` en vez de `Movimientos de`, `Tu pago` en vez de `Su pago`, y los totales cierran con `Consumos totales` / `Total a pagar`. Tienen su propio parser (`parseTarjetasEmbebidas`), que devuelve la misma forma normalizada, así que preview, reglas, dedupe y guardado se reutilizan sin cambios.
+
+**Mapeo de cuentas**
+Antes de la preview se listan las cuentas detectadas (bancarias y tarjetas, una por moneda) con un select para asignarlas y un botón para crear la que falte —tarjetas con `EnPatrimonio` off—. El auto-mapeo sólo asigna cuando el nombre coincide: con una sola cuenta bancaria en pesos, adivinar mandaría la Cuenta Corriente a la Caja de Ahorro.
+
+**Internos, sin doble conteo**
+Cada `Pago de tarjeta de credito` del cuerpo bancario se convierte en **Interno banco→tarjeta**, emparejado por moneda e importe con el `Tu pago` del resumen de esa tarjeta, que entonces **se saltea**. El gasto entra una sola vez (por los consumos) y el pago es neutro. Además se sugieren como Internos los pares egreso/ingreso espejo entre cuentas propias (mismo importe, misma moneda, hasta 2 días de diferencia), editables en la preview. Todos se revisan juntos en una solapa **Internos / transferencias**.
+
+**Preview con solapas**
+Una por cuenta detectada más la de internos, cada una con la tabla editable de la Fase 7.1 (dos fechas, categoría, regla por fila) más un selector de cuenta por fila para corregir el corte de columna, y el destino editable en los internos.
+
+**Verificado con el resumen real** (`2026-08-27`, 17 páginas): 3 cuentas bancarias + 2 tarjetas detectadas, 68 movimientos. Los saldos **cuadran exacto**: pesos $51.574,64 + (−$3.109,12) = **$48.465,52** y dólares **u$s 2,16**, los mismos totales que imprime el resumen. Los 4 pagos de tarjeta quedaron como Internos con su destino correcto (Visa/Amex en pesos y en dólares) y **ningún `Tu pago` se importó** (`0` filas). Los consumos de cada tarjeta suman su subtotal impreso ($663.843,10 la Visa; $355.388,37 + u$s 21,99 la Amex). Las reglas categorizaron sola la línea de Claude. El patrimonio no se infla con las tarjetas. Reimportar el mismo PDF marcó las 68 filas como duplicadas y dejó el botón deshabilitado. Sin errores de consola y sin scroll horizontal en 375px.
+
+**A tener en cuenta**: si importás sólo este resumen, la tarjeta queda con saldo positivo, porque el pago que aparece acá cancela el resumen del mes anterior, cuya deuda no está cargada. Se acomoda importando también el resumen anterior (o cargando el saldo inicial de la tarjeta).
+
+**Pendiente**: PPI, Balanz y MercadoPago.
+
 ## Fase 7.1 — Preview de importación editable y reglas por fila (2026-09-10) ✅
 
 Revisión del prompt de la Fase 7 con una previsualización más completa. Todo lo demás de esa fase (columnas `Hash` / `Fuente` / `FechaResumen`, dedupe, motor de reglas, ABM, `saveMovimientos` en lote) ya estaba: esta entrada cubre sólo el delta. **Sólo frontend, no requiere re-deploy.**

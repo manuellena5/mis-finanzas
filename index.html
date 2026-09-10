@@ -212,6 +212,11 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .reglaform input[type=text]{min-width:150px}
 .reglaform .rinfo{font-size:11.5px;color:var(--green);font-weight:600;padding-bottom:6px}
 .reglaform .rinfo.vacio{color:var(--danger)}
+
+/* Mapeo de cuentas detectadas: en pantallas chicas cada fila envuelve */
+.mapeo .item{flex-wrap:wrap}
+.mapeo .item select{flex:1 1 150px;min-width:0;max-width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;background:#fff;color:var(--ink)}
+@media(max-width:560px){ .mapeo .item .nm{flex:1 1 100%} }
 .tbl td.num{text-align:right;white-space:nowrap;font-weight:600}
 .tbl td.num.pos{color:var(--green-med)}
 .tbl td.num.neg{color:var(--danger)}
@@ -530,26 +535,36 @@ function lastMoney(linea){
   return { token:last[0], moneda: last[2] === "U$S" ? "USD" : "ARS", importe: parseNum(last[3]) * (last[1] === "-" ? -1 : 1) };
 }
 
-/** pdf.js entrega fragmentos sueltos: los reagrupamos por `y` y ordenamos por `x`. */
-async function pdfLines(file){
+/**
+ * pdf.js entrega fragmentos sueltos: los reagrupamos por `y` y ordenamos por `x`.
+ * Conservamos la posición de cada fragmento porque el resumen de cuenta usa
+ * columnas (Caja de Ahorro / Cuenta Corriente) que sólo se distinguen por `x`.
+ */
+async function pdfLineasItems(file){
   const buf = await file.arrayBuffer();
   const doc = await pdfjsLib.getDocument({data:buf}).promise;
-  const lines = [];
+  const lineas = [];
   for(let p = 1; p <= doc.numPages; p++){
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
     const rows = {};
     tc.items.forEach(it => {
-      if(!it.str) return;
+      if(!it.str || !it.str.trim()) return;
       const y = Math.round(it.transform[5]);
-      (rows[y] = rows[y] || []).push({ x: it.transform[4], s: it.str });
+      (rows[y] = rows[y] || []).push({ s: it.str, x: it.transform[4], r: it.transform[4] + it.width });
     });
     Object.keys(rows).map(Number).sort((a,b) => b - a).forEach(y => {
-      const line = rows[y].sort((a,b) => a.x - b.x).map(o => o.s).join(" ").replace(/\s+/g, " ").trim();
-      if(line) lines.push(line);
+      const items = rows[y].sort((a,b) => a.x - b.x);
+      const texto = items.map(o => o.s).join(" ").replace(/\s+/g, " ").trim();
+      if(texto) lineas.push({ pagina:p, y, texto, items });
     });
   }
-  return lines;
+  return lineas;
+}
+
+/** Sólo el texto de cada línea (lo que usan los parsers de tarjeta suelta). */
+async function pdfLines(file){
+  return (await pdfLineasItems(file)).map(l => l.texto);
 }
 
 /**
@@ -625,6 +640,234 @@ function parseTarjetaPDF(lines){
   return {
     lineas,
     meta:{ card, totalPesos, totalUsd, subtotalPesos, subtotalUsd, cierreIso:cierre, vencIso:venc, periodo:periodoDesdeCierre(cierre) }
+  };
+}
+
+/* ══════════ Resumen de cuenta Santander (multi-cuenta + tarjetas embebidas) ══════════ */
+
+const esMontoItem = s => /^-?(\$|U\$S)\s/.test(String(s).trim());
+/** "$ 1.234,56" / "-U$S 6,94" → {moneda, importe} */
+function montoDeItem(s){
+  const t = String(s).trim();
+  const moneda = /U\$S/.test(t) ? "USD" : "ARS";
+  const n = parseNum(t.replace(/U\$S|\$/g, ""));
+  return n == null ? null : { moneda, importe: n };
+}
+
+/** El PDF es un resumen de cuenta si trae las secciones de movimientos del banco. */
+const esResumenDeCuenta = lineas => lineas.some(l => /^Movimientos en (pesos|d[óo]lares)/i.test(l.texto));
+
+/**
+ * Cuerpo bancario: cada sección ("Movimientos en pesos/dólares") trae una columna
+ * por cuenta más la de saldo. La columna de cada importe se resuelve por su borde
+ * derecho, que es el que coincide con el del encabezado (los montos van alineados
+ * a la derecha).
+ */
+function parseResumenBanco(lineas){
+  const cuentas = {};      // clave → {clave, nombre, moneda, saldoInicial}
+  const movs = [], saldos = {};
+  let cols = null, moneda = null, enSeccion = false, lastDate = "", ultimo = null;
+
+  const columnaDe = (item) => {
+    let mejor = null, dist = 20;                    // tolerancia en puntos
+    for(const c of cols){
+      const d = Math.abs(item.r - c.r);
+      if(d < dist){ dist = d; mejor = c; }
+    }
+    return mejor;
+  };
+
+  for(const l of lineas){
+    const t = l.texto;
+
+    const mSec = t.match(/^Movimientos en (pesos|d[óo]lares)/i);
+    if(mSec){
+      enSeccion = true;
+      moneda = /pesos/i.test(mSec[1]) ? "ARS" : "USD";
+      cols = null; ultimo = null; lastDate = "";
+      continue;
+    }
+    if(!enSeccion) continue;
+
+    if(/^Saldo total/i.test(t)){                    // cierra la sección
+      enSeccion = false; ultimo = null;
+      continue;
+    }
+
+    // Encabezado de la tabla (se repite en cada página)
+    if(/^Fecha\b/.test(t) && /Comprobante/.test(t) && /Movimiento/.test(t)){
+      cols = l.items.filter(i => i.x > 300).map(i => ({ nombre:i.s.trim(), x:i.x, r:i.r }));
+      cols.forEach((c, idx) => {
+        c.esSaldo = idx === cols.length - 1;
+        if(!c.esSaldo){
+          const clave = c.nombre;
+          if(!cuentas[clave]) cuentas[clave] = { clave, nombre:c.nombre, moneda, saldoInicial:null };
+        }
+      });
+      ultimo = null;
+      continue;
+    }
+    if(!cols) continue;
+
+    const montos = l.items.filter(i => esMontoItem(i.s));
+    if(!montos.length){
+      // Línea de contraparte ("A fulano…", "De fulano…", "Del 01/07…")
+      if(ultimo && t && !/^\d{2}\/\d{2}\/\d{2}$/.test(t)) ultimo.concepto = (ultimo.concepto + " " + t).trim();
+      continue;
+    }
+
+    const fechaItem = l.items.find(i => i.x < 70 && /^\d{2}\/\d{2}\/\d{2}$/.test(i.s.trim()));
+    if(fechaItem) lastDate = ddmmyyToIso(fechaItem.s.trim());
+    const comprobante = (l.items.find(i => i.x >= 60 && i.x < 112 && /^\d{4,}$/.test(i.s.trim())) || {}).s || "";
+    const concepto = l.items
+      .filter(i => i.x >= 112 && i.x < 330 && !esMontoItem(i.s))
+      .map(i => i.s).join(" ").replace(/\s+/g, " ").trim();
+
+    // El importe del movimiento es el que NO cae en la columna de saldo
+    let dato = null, saldo = null;
+    for(const it of montos){
+      const col = columnaDe(it);
+      const v = montoDeItem(it.s);
+      if(!col || !v) continue;
+      if(col.esSaldo) saldo = v.importe;
+      else if(v.importe !== 0 && !dato) dato = { col, ...v };
+    }
+
+    if(/^Saldo Inicial/i.test(concepto)){          // no es un movimiento: es la apertura
+      for(const it of montos){
+        const col = columnaDe(it), v = montoDeItem(it.s);
+        if(col && !col.esSaldo && v && cuentas[col.nombre]) cuentas[col.nombre].saldoInicial = v.importe;
+      }
+      continue;
+    }
+    if(!dato) continue;
+
+    ultimo = {
+      cuentaDetectada: dato.col.nombre,
+      fechaIso: lastDate,
+      comprobante: String(comprobante).trim(),
+      concepto: concepto || "(sin concepto)",
+      moneda: dato.moneda,
+      importe: dato.importe,
+      saldoCorriente: saldo
+    };
+    movs.push(ultimo);
+    if(saldo != null) saldos[moneda] = saldo;      // el último saldo de la sección
+  }
+
+  /* Conciliación: el "Saldo en cuenta" del resumen es el acumulado de todas las
+     cuentas de esa moneda, así que se controla por moneda y no por cuenta. */
+  const totales = {};
+  for(const c of Object.values(cuentas)){
+    const t = totales[c.moneda] || (totales[c.moneda] = { inicial:0, movimientos:0, resumen:saldos[c.moneda] });
+    t.inicial += (+c.saldoInicial || 0);
+  }
+  for(const m of movs){
+    if(totales[m.moneda]) totales[m.moneda].movimientos += m.importe;
+  }
+  Object.values(totales).forEach(t => {
+    t.calculado = Math.round((t.inicial + t.movimientos) * 100) / 100;
+    t.coincide = t.resumen != null && Math.abs(t.calculado - t.resumen) < 0.05;
+  });
+
+  return { cuentas: Object.values(cuentas), movs, totales };
+}
+
+/**
+ * Tarjetas embebidas en el resumen de cuenta. Mismo contenido que el PDF suelto
+ * de la Fase 8 pero con otras etiquetas ("Consumos del mes" en vez de
+ * "Movimientos de", "Tu pago" en vez de "Su pago"), así que tiene su propio parser.
+ */
+function parseTarjetasEmbebidas(lineas){
+  const bloques = [];
+  let actual = null;
+  for(const l of lineas){
+    if(/^Tarjeta Santander$/i.test(l.texto)){
+      actual = [];
+      bloques.push(actual);
+      continue;
+    }
+    if(actual) actual.push(l);
+  }
+  return bloques.map(parseBloqueTarjeta).filter(t => t && t.lineas.length);
+}
+
+function parseBloqueTarjeta(bloque){
+  let emisor = "Tarjeta", numero = "", cierre = "", venc = "";
+  let totalPesos = null, totalUsd = null, subtotalPesos = null, subtotalUsd = null;
+  let sec = null, lastDate = "", esperandoFechas = false;
+  const lineas = [];
+
+  for(const l of bloque){
+    const t = l.texto;
+
+    if(/^Visa cr[ée]dito/i.test(t)) emisor = "Visa";
+    else if(/^American Express/i.test(t)) emisor = "Amex";
+    else if(/^Mastercard/i.test(t)) emisor = "Mastercard";
+
+    const mNum = t.match(/Tarjeta terminada en (\d{3,})/i);
+    if(mNum && !numero) numero = mNum[1];
+
+    // Cierre y vencimiento del período actual: van en la línea siguiente al encabezado
+    if(!cierre && /Cierre/i.test(t) && /Vencimiento/i.test(t) && !/anterior|pr[óo]ximo/i.test(t)){
+      esperandoFechas = true;
+      continue;
+    }
+    if(esperandoFechas){
+      const ds = t.match(/\d{2}\/\d{2}\/\d{2}/g);
+      if(ds && ds.length >= 2){ cierre = ddmmyyToIso(ds[0]); venc = ddmmyyToIso(ds[1]); esperandoFechas = false; }
+      continue;
+    }
+
+    if(/^Pago anterior y devoluciones/i.test(t)){ sec = "pago"; continue; }
+    if(/^Consumos del mes/i.test(t)){ sec = "consumo"; continue; }
+    if(/^Impuestos$/i.test(t)){ sec = "impuesto"; continue; }
+    if(/^Consumos totales/i.test(t)){
+      const ms = l.items.filter(i => esMontoItem(i.s)).map(i => montoDeItem(i.s));
+      ms.forEach(v => { if(v.moneda === "USD") subtotalUsd = v.importe; else subtotalPesos = v.importe; });
+      sec = null; continue;
+    }
+    if(/^Total a pagar/i.test(t)){
+      const ms = l.items.filter(i => esMontoItem(i.s)).map(i => montoDeItem(i.s));
+      ms.forEach(v => { if(v.moneda === "USD") totalUsd = v.importe; else totalPesos = v.importe; });
+      break;                                     // el bloque de esta tarjeta termina acá
+    }
+    if(!sec) continue;
+    if(/^Fecha\b/i.test(t)) continue;                        // encabezado de tabla
+    if(/\bSaldo (anterior|del resumen)/i.test(t)) continue;  // es un saldo, no un movimiento
+    if(/^Total\b/i.test(t)) continue;                        // subtotales de sección
+
+    const montos = l.items.filter(i => esMontoItem(i.s));
+    if(!montos.length) continue;
+
+    const fechaItem = l.items.find(i => i.x < 75 && /^\d{2}\/\d{2}\/\d{2}$/.test(i.s.trim()));
+    if(fechaItem) lastDate = ddmmyyToIso(fechaItem.s.trim());
+
+    const mCuota = t.match(/(\d{1,2})\s+de\s+(\d{1,2})/);
+    const desc = l.items
+      .filter(i => i.x >= 75 && i.x < 340 && !esMontoItem(i.s) && !/^\d{2}\/\d{2}\/\d{2}$/.test(i.s.trim()) && !/^\d{4,}$/.test(i.s.trim()))
+      .map(i => i.s).join(" ").replace(/\s+/g, " ").replace(/\s*\$\s*$/, "").trim();
+
+    const v = montoDeItem(montos[montos.length - 1].s);
+    if(!v || !desc) continue;
+
+    lineas.push({
+      clase: sec,
+      fechaIso: lastDate || cierre,
+      desc,
+      cuotas: mCuota ? `${+mCuota[1]}/${+mCuota[2]}` : "",
+      moneda: v.moneda,
+      importe: v.importe,
+      impuesto: sec === "impuesto"
+    });
+  }
+
+  if(!numero && !lineas.length) return null;
+  return {
+    emisor, numero,
+    lineas,
+    meta:{ card:numero, totalPesos, totalUsd, subtotalPesos, subtotalUsd,
+           cierreIso:cierre, vencIso:venc, periodo:periodoDesdeCierre(cierre) }
   };
 }
 
@@ -1586,7 +1829,8 @@ function cardComposicion(titulo, filasTodas){
 
 /* ══════════════════════ IMPORTACIÓN DE RESÚMENES ══════════════════════ */
 function modalImportar(){
-  const est = { datos:null, filas:[], periodo:"", fechaResumen:"", cuentaArs:"", cuentaUsd:"", archivo:"" };
+  const est = { datos:null, filas:[], periodo:"", fechaResumen:"", cuentaArs:"", cuentaUsd:"", archivo:"",
+                modo:"tarjeta", detectadas:[], solapa:"", banco:null, tarjetas:[] };
 
   $("#modalRoot").innerHTML = `<div class="overlay" id="ovImp"><div class="modal wide" id="impBody"></div></div>`;
   const cerrar = () => { $("#modalRoot").innerHTML = ""; };
@@ -1628,7 +1872,21 @@ function modalImportar(){
       if(esPdf){
         if(typeof pdfjsLib === "undefined"){ toast("El lector de PDF todavía está cargando, probá en un segundo"); return; }
         pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-        const lines = await pdfLines(file);
+        const conItems = await pdfLineasItems(file);
+
+        // Resumen de cuenta: varias cuentas y las tarjetas embebidas
+        if(esResumenDeCuenta(conItems)){
+          est.modo = "cuenta";
+          est.archivo = file.name;
+          prepararResumenCuenta(conItems);
+          if(!est.filas.length){ toast("No encontré movimientos en ese resumen"); return; }
+          est.datos = { emisor:"Santander", numero:"", lineas:[], meta:{} };
+          est.solapa = est.detectadas[0] ? est.detectadas[0].clave : "";
+          pintar();
+          return;
+        }
+
+        const lines = conItems.map(l => l.texto);
         ({ lineas, meta } = parseTarjetaPDF(lines));
         info = detectarEmisorPDF(lines, meta.card);
       }else{
@@ -1644,6 +1902,7 @@ function modalImportar(){
       if(!lineas.length){ toast("No encontré consumos en ese archivo"); return; }
       est.datos   = { ...info, lineas, meta };
       est.archivo = file.name;
+      est.modo    = "tarjeta";
       est.fechaResumen = meta.cierreIso || "";
       est.periodo = meta.periodo || (est.fechaResumen ? periodoDesdeCierre(est.fechaResumen) : mesActual());
       elegirCuentas();
@@ -1686,6 +1945,144 @@ function modalImportar(){
     revisarDuplicados();
   }
 
+  /* ── Resumen de cuenta: cuentas detectadas, filas por cuenta e internos ── */
+  function prepararResumenCuenta(lineas){
+    const banco    = parseResumenBanco(lineas);
+    const tarjetas = parseTarjetasEmbebidas(lineas);
+    est.banco = banco;
+    est.tarjetas = tarjetas;
+
+    // Cuentas detectadas: las del banco + una por tarjeta y moneda
+    const det = banco.cuentas.map(c => ({
+      clave: c.clave, nombre: c.nombre, moneda: c.moneda, clase: "banco",
+      saldoInicial: c.saldoInicial, cuentaApp: ""
+    }));
+    tarjetas.forEach(t => {
+      const monedas = [...new Set(t.lineas.map(l => l.moneda))];
+      monedas.forEach(mon => det.push({
+        clave: `tarjeta:${t.numero}:${mon}`,
+        nombre: `${t.emisor} ${t.numero}${mon === "USD" ? " (dólares)" : ""}`,
+        moneda: mon, clase: "tarjeta", tarjeta: t, cuentaApp: ""
+      }));
+    });
+    est.detectadas = det;
+    autoMapear();
+
+    /* Pagos de tarjeta: la pata del banco se convierte en Interno banco→tarjeta y
+       el "Tu pago" del resumen de la tarjeta se saltea, para no contarlo dos veces. */
+    const pagosTarjetaUsados = new Set();
+    const filas = [];
+    let idx = 0;
+
+    banco.movs.forEach(m => {
+      const esPagoTarjeta = /pago de tarjeta/i.test(m.concepto) && m.importe < 0;
+      let destino = null;
+      if(esPagoTarjeta){
+        for(const t of tarjetas){
+          const clave = `tarjeta:${t.numero}:${m.moneda}`;
+          if(!det.some(d => d.clave === clave)) continue;
+          const cand = t.lineas.find((l, i) =>
+            l.clase === "pago" && /tu pago/i.test(l.desc) && l.moneda === m.moneda &&
+            Math.abs(Math.abs(l.importe) - Math.abs(m.importe)) < 0.01 &&
+            !pagosTarjetaUsados.has(t.numero + "|" + i));
+          if(cand){
+            pagosTarjetaUsados.add(t.numero + "|" + t.lineas.indexOf(cand));
+            destino = clave;
+            break;
+          }
+        }
+      }
+      filas.push(nuevaFila(idx++, {
+        grupo: m.cuentaDetectada,
+        fecha: m.fechaIso,
+        concepto: m.concepto,
+        moneda: m.moneda,
+        monto: Math.abs(m.importe),
+        tipo: destino ? "Interno" : (m.importe < 0 ? "Egreso" : "Ingreso"),
+        destinoGrupo: destino || "",
+        esPagoTarjeta,
+        origen: "banco"
+      }));
+    });
+
+    tarjetas.forEach(t => {
+      t.lineas.forEach((l, i) => {
+        if(l.clase === "pago" && /tu pago/i.test(l.desc) && pagosTarjetaUsados.has(t.numero + "|" + i)) return;   // ya está como Interno
+        const clave = `tarjeta:${t.numero}:${l.moneda}`;
+        filas.push(nuevaFila(idx++, {
+          grupo: clave,
+          fecha: l.fechaIso,
+          fechaResumen: t.meta.cierreIso || l.fechaIso,
+          concepto: l.desc + textoCuotas(l.cuotas),
+          moneda: l.moneda,
+          monto: Math.abs(l.importe),
+          tipo: l.importe < 0 ? "Ingreso" : "Egreso",
+          esImpuesto: !!l.impuesto,
+          esPago: l.importe < 0,
+          observacion: `Resumen ${t.meta.periodo}` + (t.meta.vencIso ? ` · vence ${dispDate(t.meta.vencIso)}` : ""),
+          origen: "tarjeta"
+        }));
+      });
+    });
+
+    est.filas = filas;
+    sugerirInternos();
+    revisarDuplicados();
+  }
+
+  /** Fila de preview con los defaults comunes (categoría por reglas incluida). */
+  function nuevaFila(i, datos){
+    const regla = datos.tipo === "Interno" ? null : aplicarReglas(datos.concepto);
+    return {
+      i, fechaResumen: datos.fecha, categoria: (regla && regla.categoria) || "",
+      reglaId: regla ? regla.id : "", categoriaManual: false, nuevaRegla: null,
+      sel: true, destinoGrupo: "", esImpuesto: false, esPago: false, observacion: "",
+      ...datos
+    };
+  }
+
+  /** Empareja egresos e ingresos espejo entre cuentas propias del mismo resumen. */
+  function sugerirInternos(){
+    const libres = est.filas.filter(f => f.origen === "banco" && f.tipo !== "Interno");
+    for(const salida of libres){
+      if(salida.tipo !== "Egreso" || salida.destinoGrupo) continue;
+      const par = libres.find(e =>
+        e.tipo === "Ingreso" && !e.destinoGrupo && e.grupo !== salida.grupo &&
+        e.moneda === salida.moneda &&
+        Math.abs(e.monto - salida.monto) < 0.01 &&
+        Math.abs(new Date(e.fecha) - new Date(salida.fecha)) <= 86400000 * 2);
+      if(!par) continue;
+      salida.tipo = "Interno";
+      salida.destinoGrupo = par.grupo;
+      salida.sugerido = true;
+      salida.categoria = "";
+      par.sel = false;                    // la pata espejo no se importa por separado
+      par.absorbidoPor = salida.i;
+    }
+  }
+
+  function autoMapear(){
+    est.detectadas.forEach(d => {
+      if(d.cuentaApp) return;
+      const candidatas = cuentasActivas().filter(c => c.moneda === d.moneda);
+      let m = null;
+      if(d.clase === "tarjeta"){
+        const tarj = candidatas.filter(c => c.tipo === "tarjeta");
+        m = tarj.find(c => d.tarjeta.numero && c.nombre.includes(d.tarjeta.numero)) ||
+            tarj.find(c => c.nombre.toLowerCase().includes(d.tarjeta.emisor.toLowerCase()));
+      }else{
+        /* Sólo mapeamos solo si el nombre coincide: con una única cuenta bancaria
+           en esa moneda, adivinar mandaría la Cuenta Corriente a la Caja de Ahorro. */
+        const clave = /corriente/i.test(d.nombre) ? "corriente" : /ahorro/i.test(d.nombre) ? "ahorro" : "";
+        m = clave ? candidatas.find(c => c.nombre.toLowerCase().includes(clave)) : null;
+      }
+      d.cuentaApp = (m || {}).id || "";
+    });
+  }
+
+  const grupoPorClave = clave => est.detectadas.find(d => d.clave === clave) || null;
+  const cuentaDeGrupo = clave => (grupoPorClave(clave) || {}).cuentaApp || "";
+
   /** Regla prellenada a partir de una fila, para el editor inline. */
   function reglaDesdeFila(f){
     return {
@@ -1707,7 +2104,8 @@ function modalImportar(){
   function revisarDuplicados(){
     const existentes = new Set(state.movimientos.map(m => m.hash || calcHash(m)));
     for(const f of est.filas){
-      f.cuenta = f.moneda === "USD" ? est.cuentaUsd : est.cuentaArs;
+      f.cuenta = est.modo === "cuenta" ? cuentaDeGrupo(f.grupo)
+                                       : (f.moneda === "USD" ? est.cuentaUsd : est.cuentaArs);
       f.hash = calcHash({fecha:f.fecha, monto:f.monto, concepto:f.concepto, cuenta:f.cuenta});
       f.dup = existentes.has(f.hash);
       if(f.dup) f.sel = false;
@@ -1723,20 +2121,42 @@ function modalImportar(){
 
   /** Una fila de la previsualización, con sus dos fechas editables. */
   function filaPreview(f){
+    const esInterno = f.tipo === "Interno";
     const cats = catsPara(f.tipo);
     const opts = `<option value="">Sin categoría</option>` + cats.map(c =>
       `<option value="${esc(c.id)}" ${f.categoria === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("");
-    const chip = f.esImpuesto ? `<span class="tag">impuesto</span>` : (f.esPago ? `<span class="tag ok">pago</span>` : "");
+
+    const chips = [];
+    if(f.esImpuesto) chips.push(`<span class="tag">impuesto</span>`);
+    else if(esInterno) chips.push(`<span class="tag">${f.sugerido ? "interno sugerido" : "interno"}</span>`);
+    else if(f.esPago || f.tipo === "Ingreso") chips.push(`<span class="tag ok">${f.esPago ? "pago" : "ingreso"}</span>`);
+
+    // En modo cuenta se puede corregir a qué cuenta va la fila
+    const celdaCuenta = est.modo === "cuenta" ? `
+      <td><select data-grupo="${f.i}">
+        ${est.detectadas.map(d => `<option value="${esc(d.clave)}" ${f.grupo === d.clave ? "selected" : ""}>${esc(d.nombre)}</option>`).join("")}
+      </select></td>` : "";
+
+    // Los internos no llevan categoría: en su lugar se elige la cuenta destino
+    const celdaCat = esInterno
+      ? `<td><select data-destino="${f.i}">
+           <option value="">— destino —</option>
+           ${est.detectadas.filter(d => d.clave !== f.grupo).map(d =>
+             `<option value="${esc(d.clave)}" ${f.destinoGrupo === d.clave ? "selected" : ""}>→ ${esc(d.nombre)}</option>`).join("")}
+         </select></td>`
+      : `<td><select data-cat="${f.i}">${opts}</select></td>`;
+
     return `
     <tr data-row="${f.i}" class="${f.dup ? "dup" : ""}">
       <td><input type="checkbox" data-sel="${f.i}" ${f.sel ? "checked" : ""} ${f.dup ? "disabled" : ""}></td>
       <td><input type="date" data-fecha="${f.i}" value="${esc(f.fecha)}"></td>
       <td><input type="date" data-fres="${f.i}" value="${esc(f.fechaResumen || f.fecha)}"></td>
-      <td>${esc(f.concepto)} ${chip}<span data-dup="${f.i}">${f.dup ? `<span class="tag off">ya está</span>` : ""}</span></td>
-      <td class="num ${f.esPago ? "pos" : "neg"}">${f.esPago ? "+" : "−"}${fmt(f.monto, f.moneda)}</td>
+      <td>${esc(f.concepto)} ${chips.join(" ")}<span data-dup="${f.i}">${f.dup ? `<span class="tag off">ya está</span>` : ""}</span></td>
+      ${celdaCuenta}
+      <td class="num ${f.tipo === "Ingreso" ? "pos" : esInterno ? "" : "neg"}">${f.tipo === "Ingreso" ? "+" : esInterno ? "" : "−"}${fmt(f.monto, f.moneda)}</td>
       <td><span class="tag ${f.moneda === "USD" ? "usd" : ""}">${f.moneda}</span></td>
-      <td><select data-cat="${f.i}">${opts}</select></td>
-      <td style="text-align:center"><input type="checkbox" data-regla="${f.i}" title="Crear una regla a partir de este movimiento" ${f.nuevaRegla ? "checked" : ""}></td>
+      ${celdaCat}
+      <td style="text-align:center">${esInterno ? "" : `<input type="checkbox" data-regla="${f.i}" title="Crear una regla a partir de este movimiento" ${f.nuevaRegla ? "checked" : ""}>`}</td>
     </tr>`;
   }
 
@@ -1747,7 +2167,7 @@ function modalImportar(){
     return `
     <tr class="reglaEd" data-reglaed="${f.i}">
       <td></td>
-      <td colspan="7">
+      <td colspan="${est.modo === "cuenta" ? 8 : 7}">
         <div class="reglaform">
           <label>El concepto
             <select data-rmatch="${f.i}">
@@ -1796,7 +2216,88 @@ function modalImportar(){
     return `Importar ${n} movimiento${n === 1 ? "" : "s"}`;
   }
 
+  /* ── Vista del resumen de cuenta: mapeo + solapas ── */
+  const GRUPO_INTERNOS = "__internos";
+  const grupoDeFila = f => f.tipo === "Interno" ? GRUPO_INTERNOS : f.grupo;
+
+  function solapas(){
+    const grupos = est.detectadas.map(d => ({
+      clave: d.clave, nombre: d.nombre,
+      n: est.filas.filter(f => grupoDeFila(f) === d.clave && !f.absorbidoPor).length
+    })).filter(g => g.n);
+    const internos = est.filas.filter(f => f.tipo === "Interno").length;
+    if(internos) grupos.push({ clave: GRUPO_INTERNOS, nombre: "Internos / transferencias", n: internos });
+    if(!grupos.some(g => g.clave === est.solapa)) est.solapa = (grupos[0] || {}).clave || "";
+    return grupos;
+  }
+
+  function vistaCuenta(){
+    const gs = solapas();
+    const t  = est.banco.totales || {};
+    const conc = Object.entries(t).map(([mon, v]) =>
+      `${mon === "USD" ? "Dólares" : "Pesos"}: ${v.coincide ? "✓" : "✗"} calculado ${fmt(v.calculado, mon)} vs resumen ${v.resumen == null ? "—" : fmt(v.resumen, mon)}`).join(" · ");
+
+    /* Se mapea toda cuenta que aparezca: como origen de movimientos o como
+       destino de un interno (una tarjeta puede recibir un pago sin tener
+       consumos propios en este resumen). */
+    const usadas = new Set();
+    est.filas.forEach(f => { usadas.add(f.grupo); if(f.destinoGrupo) usadas.add(f.destinoGrupo); });
+
+    const mapeo = est.detectadas.filter(d => usadas.has(d.clave)).map(d => {
+      const cand = cuentasActivas().filter(c => c.moneda === d.moneda);
+      const n = est.filas.filter(f => f.grupo === d.clave).length;
+      return `
+      <div class="item">
+        <span style="width:20px;text-align:center;flex-shrink:0">${d.clase === "tarjeta" ? "💳" : "🏦"}</span>
+        <span class="nm">${esc(d.nombre)} <span class="tag">${d.moneda}</span> <span class="tag">${n} mov.</span></span>
+        <select data-mapa="${esc(d.clave)}">
+          <option value="">— elegir cuenta —</option>
+          ${cand.map(c => `<option value="${esc(c.id)}" ${d.cuentaApp === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}
+        </select>
+        ${d.cuentaApp ? "" : `<button class="btn ghost sm" data-crear="${esc(d.clave)}" style="flex-shrink:0;white-space:nowrap">Crear</button>`}
+      </div>`;
+    }).join("");
+
+    const filasHtml = est.filas
+      .filter(f => grupoDeFila(f) === est.solapa && !f.absorbidoPor)
+      .map(f => filaPreview(f) + (f.nuevaRegla ? editorRegla(f) : "")).join("");
+
+    const sinMapear = est.detectadas.filter(d => !d.cuentaApp && usadas.has(d.clave)).length;
+
+    return `
+      <button class="close" id="mClose">×</button>
+      <h3>Resumen de cuenta Santander</h3>
+      <p class="hint">${esc(est.archivo)} · ${est.detectadas.length} cuentas detectadas · ${est.filas.length} movimientos${est.tarjetas.length ? ` · ${est.tarjetas.length} ${est.tarjetas.length === 1 ? "tarjeta embebida" : "tarjetas embebidas"}` : ""}</p>
+      ${conc ? `<p class="hint" style="margin:2px 0 10px">Saldos del resumen — ${conc}.</p>` : ""}
+
+      <p class="hint" style="margin:14px 0 2px"><b>Cuentas detectadas</b> — asigná cada una a una cuenta de la app.</p>
+      <div class="mapeo">${mapeo}</div>
+
+      <div class="filtros" style="margin-top:14px">
+        ${gs.map(g => `<button class="pill ${est.solapa === g.clave ? "on" : ""}" data-solapa="${esc(g.clave)}">${esc(g.nombre)} · ${g.n}</button>`).join("")}
+      </div>
+
+      <div class="tblwrap">
+        <table class="tbl">
+          <thead><tr>
+            <th><input type="checkbox" id="selTodos"></th>
+            <th>Fecha consumo</th><th>Fecha resumen</th><th>Concepto</th><th>Cuenta</th>
+            <th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría / destino</th><th>Regla</th>
+          </tr></thead>
+          <tbody>${filasHtml}</tbody>
+        </table>
+      </div>
+
+      <p class="hint" style="margin:10px 0 0" id="impPie">${textoPie()}</p>
+      ${sinMapear ? `<p class="hint" style="color:var(--danger)">Falta asignar ${sinMapear} ${sinMapear === 1 ? "cuenta" : "cuentas"} antes de importar.</p>` : ""}
+
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn primary block" id="btnImportar" ${cuentaImportar() && !sinMapear ? "" : "disabled"}>${textoBoton()}</button>
+      </div>`;
+  }
+
   function vistaPreview(){
+    if(est.modo === "cuenta") return vistaCuenta();
     const { meta } = est.datos;
     const hayUsd = est.filas.some(f => f.moneda === "USD");
     const dups   = est.filas.filter(f => f.dup).length;
@@ -1920,20 +2421,41 @@ function modalImportar(){
   function bindPreview(){
     $("#mClose").onclick = cerrar;
 
-    $("#impCuentaArs").onchange = e => { est.cuentaArs = e.target.value; revisarDuplicados(); pintar(); };
-    const selUsd = $("#impCuentaUsd");
-    if(selUsd) selUsd.onchange = e => { est.cuentaUsd = e.target.value; revisarDuplicados(); pintar(); };
+    if(est.modo === "cuenta"){
+      $$("[data-mapa]").forEach(sel => sel.onchange = () => {
+        const d = grupoPorClave(sel.dataset.mapa);
+        if(d) d.cuentaApp = sel.value;
+        revisarDuplicados();
+        pintar();
+      });
+      $$("[data-crear]").forEach(b => b.onclick = ev => crearCuentaDetectada(b.dataset.crear, ev.currentTarget));
+      $$("[data-solapa]").forEach(b => b.onclick = () => { est.solapa = b.dataset.solapa; pintar(); });
+      $$("[data-grupo]").forEach(sel => sel.onchange = () => {
+        const f = est.filas[+sel.dataset.grupo];
+        f.grupo = sel.value;
+        revisarDuplicados();
+        pintar();
+      });
+      $$("[data-destino]").forEach(sel => sel.onchange = () => {
+        est.filas[+sel.dataset.destino].destinoGrupo = sel.value;
+        refrescarPie();
+      });
+    }else{
+      $("#impCuentaArs").onchange = e => { est.cuentaArs = e.target.value; revisarDuplicados(); pintar(); };
+      const selUsd = $("#impCuentaUsd");
+      if(selUsd) selUsd.onchange = e => { est.cuentaUsd = e.target.value; revisarDuplicados(); pintar(); };
 
-    // Atajo: la fecha de cierre se aplica a todas las líneas de una
-    $("#impFechaResumen").onchange = e => {
-      est.fechaResumen = e.target.value;
-      est.periodo = periodoDesdeCierre(est.fechaResumen) || est.periodo;
-      est.filas.forEach(f => { f.fechaResumen = est.fechaResumen || f.fecha; });
-      pintar();
-    };
+      // Atajo: la fecha de cierre se aplica a todas las líneas de una
+      $("#impFechaResumen").onchange = e => {
+        est.fechaResumen = e.target.value;
+        est.periodo = periodoDesdeCierre(est.fechaResumen) || est.periodo;
+        est.filas.forEach(f => { f.fechaResumen = est.fechaResumen || f.fecha; });
+        pintar();
+      };
 
-    const btnUsd = $("#btnCrearUsd");
-    if(btnUsd) btnUsd.onclick = ev => crearCuentaUsd(ev.currentTarget);
+      const btnUsd = $("#btnCrearUsd");
+      if(btnUsd) btnUsd.onclick = ev => crearCuentaUsd(ev.currentTarget);
+    }
 
     $("#selTodos").onchange = e => {
       est.filas.forEach(f => { if(!f.dup) f.sel = e.target.checked; });
@@ -2011,6 +2533,36 @@ function modalImportar(){
     $("#btnImportar").onclick = ev => confirmar(ev.currentTarget);
   }
 
+  /** Crea en la app una de las cuentas detectadas en el resumen. */
+  async function crearCuentaDetectada(clave, btn){
+    const d = grupoPorClave(clave);
+    if(!d) return;
+    const cuenta = {
+      id: uid(),
+      nombre: d.nombre,
+      tipo: d.clase === "tarjeta" ? "tarjeta" : "banco",
+      moneda: d.moneda,
+      saldoInicial: d.clase === "banco" ? (+d.saldoInicial || 0) : 0,
+      fechaInicial: est.filas.filter(f => f.grupo === clave).map(f => f.fecha).sort()[0] || todayIso(),
+      enPatrimonio: d.clase !== "tarjeta",
+      orden: 0, activo: true
+    };
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = "Creando…";
+    try{
+      await api({action:"saveCuenta", cuenta});
+      state.cuentas.push(cuenta);
+      state.cuentas = ordenarCuentas(state.cuentas);
+      d.cuentaApp = cuenta.id;
+      revisarDuplicados();
+      pintar();
+      toast(`Cuenta "${cuenta.nombre}" creada`);
+    }catch(e){
+      toast(e.message);
+      btn.disabled = false; btn.textContent = prev;
+    }
+  }
+
   async function crearCuentaUsd(btn){
     const nombre = `${est.datos.emisor}${est.datos.numero ? " " + est.datos.numero : ""} USD`;
     const cuenta = {
@@ -2035,16 +2587,20 @@ function modalImportar(){
   }
 
   async function confirmar(btn){
-    const sel = est.filas.filter(f => f.sel && !f.dup);
+    const sel = est.filas.filter(f => f.sel && !f.dup && !f.absorbidoPor);
     if(!sel.length){ toast("No hay filas para importar"); return; }
     if(sel.some(f => !f.cuenta)){
-      toast(sel.some(f => f.moneda === "USD" && !f.cuenta) ? "Falta elegir la cuenta en dólares" : "Falta elegir la cuenta de la tarjeta");
+      toast(est.modo === "cuenta" ? "Falta asignar alguna cuenta detectada"
+        : sel.some(f => f.moneda === "USD" && !f.cuenta) ? "Falta elegir la cuenta en dólares" : "Falta elegir la cuenta de la tarjeta");
       return;
     }
+    const internoSinDestino = sel.find(f => f.tipo === "Interno" && !cuentaDeGrupo(f.destinoGrupo));
+    if(internoSinDestino){ toast(`Elegí la cuenta destino de «${internoSinDestino.concepto.slice(0, 30)}»`); return; }
+
     btn.disabled = true; btn.textContent = "Guardando…";
     try{
-      const meta = est.datos.meta;
-      const obs  = `Resumen ${est.periodo}` + (meta.vencIso ? ` · vence ${dispDate(meta.vencIso)}` : "");
+      const meta = est.datos.meta || {};
+      const obsTarjeta = `Resumen ${est.periodo}` + (meta.vencIso ? ` · vence ${dispDate(meta.vencIso)}` : "");
       const modoCredito = (state.modosPago.find(m => /cr[eé]dito/i.test(m.nombre)) || {}).nombre || "";
 
       // Cotizaciones: una consulta por fecha distinta, todas en paralelo
@@ -2056,13 +2612,18 @@ function modalImportar(){
       const movimientos = [];
       for(const f of sel){
         const cot = cots[f.fecha];
+        const esInterno = f.tipo === "Interno";
+        const destino = esInterno ? cuentaDeGrupo(f.destinoGrupo) : "";
         movimientos.push({
           id: uid(), mes: mesDe(f.fecha), fecha: f.fecha, tipo: f.tipo,
-          categoria: f.categoria, concepto: f.concepto,
-          cuenta: f.cuenta, cuentaDestino: "",
+          categoria: esInterno ? "" : f.categoria, concepto: f.concepto,
+          cuenta: f.cuenta, cuentaDestino: destino,
           moneda: f.moneda, monto: f.monto,
-          monedaDestino: "", montoDestino: null,
-          cotizacion: cot || null, modoPago: modoCredito, observacion: obs,
+          monedaDestino: esInterno ? monedaCuenta(destino) : "",
+          montoDestino: esInterno ? f.monto : null,
+          cotizacion: cot || null,
+          modoPago: (est.modo === "cuenta" ? (f.origen === "tarjeta" ? modoCredito : "") : modoCredito),
+          observacion: est.modo === "cuenta" ? (f.observacion || "") : obsTarjeta,
           fechaResumen: f.fechaResumen || f.fecha,   // el cierre del resumen que lo factura
           timestamp: "", hash: f.hash, fuente: "import"
         });
