@@ -32,7 +32,7 @@
 
 /* Versión del proyecto. Se sube en cada cambio, acá y en index.html / sw.js, para
    poder ver desde la app si el backend publicado está al día. */
-const VERSION = "10.3";
+const VERSION = "10.5";
 
 const CUENTAS_SHEET = "Cuentas";
 const CONFIG_SHEET  = "Config";

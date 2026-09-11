@@ -1,5 +1,23 @@
 # Changelog
 
+## v10.5 — Las filas sin categoría se ven (2026-09-11) ✅
+
+Al revisar un resumen largo, las filas que todavía no tienen categoría se perdían entre las demás: el select decía *"Sin categoría"* con el mismo gris que el resto. Ahora ese select se pinta en **ámbar** (borde, fondo y texto), así que de un vistazo se ve qué queda por categorizar. Se apaga apenas elegís una categoría y vuelve si la sacás, sin repintar la tabla.
+
+El color es ámbar y no rojo a propósito: una fila sin categoría **se importa igual**, es un pendiente y no un error —el rojo ya está reservado para lo que sí bloquea el confirmar, como un interno sin origen o sin destino—. Vale para las dos previews, la del resumen de cuenta y la del resumen de tarjeta.
+
+**Sólo frontend**; `Code.gs` cambia únicamente en `VERSION`, así que hay que re-deployar el Apps Script para que el chip del header no quede en rojo.
+
+**Verificado**: en la solapa *Caja de Ahorro $*, las tres filas arrancan en ámbar (`rgba(245,158,11,.14)` de fondo, texto `#B45309`); elegir *Sueldo* en una la deja blanca al instante, volver a *Sin categoría* la repinta, y el ámbar sobrevive a un repintado completo (abrir el editor de regla de una fila). Sin errores de consola recorriendo todas las solapas.
+
+## v10.4 — Marcar un Interno no te saca de la solapa (2026-09-11) ✅
+
+Al pasar una fila a **Interno** en el resumen de cuenta, la app te llevaba automáticamente a la solapa *Internos / transferencias*. Si estabas categorizando una cuenta, eso te cortaba el trabajo: volvías, buscabas dónde ibas y seguías. Ahora **te quedás donde estás** y sólo aparece un toast — *"Pasó a «Internos / transferencias»: completá ahí el origen y el destino"* — para que no parezca que la fila se perdió. Los internos se completan cuando quieras, en su solapa.
+
+La unión de dos patas en un MEP (**Unir como interno**) sí sigue llevándote a la solapa de internos: es una acción explícita y el resultado —la tarjeta con el tipo de cambio implícito— es justamente lo que querés ver. **Sólo frontend**; `Code.gs` cambia únicamente en `VERSION`, así que hay que re-deployar el Apps Script para que el chip del header no quede en rojo.
+
+**Verificado**: parado en *Caja de Ahorro $ · 3*, pasar una fila a Interno deja la solapa activa en *Caja de Ahorro $ · 2* (y *Internos* sube a 2) con el toast explicando adónde fue; una segunda conversión tampoco salta. Una categoría elegida antes de convertir otra fila sobrevive al repintado.
+
 ## v10.3 — UX del importador: modal, mapeo colapsable, solapas fijas, internos claros y MEP (2026-09-11) ✅
 
 Ajustes de usabilidad sobre la importación del resumen de cuenta (Fases 10 / 10.1 / 10.2) y el manejo de la compra/venta de dólar MEP. **Sólo frontend: no toca el parser, la lógica del backend ni el modelo de datos.** `Code.gs` cambia únicamente en `VERSION`, que va en sincronía con `index.html` y `sw.js`: hay que **re-deployar el Apps Script** o el chip del header queda en rojo avisando el desfasaje.
