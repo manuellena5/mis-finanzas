@@ -201,9 +201,13 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 /* Preview de importación: ocupa casi toda la pantalla, con la tabla scrolleando
    adentro y el botón de confirmar siempre visible abajo. */
 .modal.imp{width:min(1500px,96vw);max-width:none;height:92vh;max-height:92vh;display:flex;flex-direction:column;padding:16px 0 0}
-.modal.imp > .impHead{padding:0 18px;flex-shrink:0;overflow:auto;max-height:42vh}
+/* La cabecera no scrollea: las solapas y el header de la tabla quedan siempre a la vista */
+.modal.imp > .impHead{padding:0 18px;flex-shrink:0}
+/* El modo tarjeta no tiene solapas que fijar: ahí la cabecera sí puede scrollear */
+.modal.imp > .impHead.scroll{overflow:auto;max-height:42vh}
 .modal.imp > .impTabla{flex:1;min-height:0;min-width:0;display:flex;padding:0 18px}
 .modal.imp > .impTabla > .tblwrap{min-width:0;flex:1}
+.modal.imp > .impTabla > .intWrap{min-width:0;flex:1;overflow:auto;padding:2px 2px 8px}
 .modal.imp > .impPie{flex-shrink:0;border-top:1px solid var(--line);padding:12px 18px calc(14px + env(safe-area-inset-bottom));background:var(--card)}
 .modal.imp .tblwrap{max-height:none;height:100%;width:100%;margin-top:0}
 .modal.imp .btn-row{margin-top:8px}
@@ -230,10 +234,66 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .reglaform .rinfo{font-size:11.5px;color:var(--green);font-weight:600;padding-bottom:6px}
 .reglaform .rinfo.vacio{color:var(--danger)}
 
-/* Mapeo de cuentas detectadas: en pantallas chicas cada fila envuelve */
-.mapeo .item{flex-wrap:wrap}
-.mapeo .item select{flex:1 1 150px;min-width:0;max-width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;background:#fff;color:var(--ink)}
+/* Cabecera compacta del importador: todo lo de arriba en una o dos líneas */
+.impLinea{font-size:11.5px;color:var(--muted);margin:2px 0 6px;display:flex;gap:4px 10px;flex-wrap:wrap;align-items:center}
+.impLinea .ok{color:var(--green-med);font-weight:600}
+.impLinea .mal{color:var(--danger);font-weight:600}
+
+/* Cuentas detectadas: bloque colapsable, se cierra solo cuando está todo asignado */
+.mapBox{border:1px solid var(--line);border-radius:10px;margin:0 0 8px;overflow:hidden}
+.mapBox > .cab{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;background:#f8fafc;border:none;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink);text-align:left}
+.mapBox > .cab .chev{margin-left:auto;color:var(--faint);font-size:11px;transition:transform .15s}
+.mapBox.abierto > .cab .chev{transform:rotate(90deg)}
+.mapBox > .cab .falta{color:var(--danger);font-weight:700}
+.mapBox > .cab .listo{color:var(--green-med);font-weight:600}
+
+/* Mapeo de cuentas detectadas: dos columnas en desktop, una fila por cuenta */
+.mapeo{display:grid;grid-template-columns:1fr;gap:0 18px;padding:4px 10px 7px;max-height:30vh;overflow:auto}
+@media(min-width:900px){ .mapeo{grid-template-columns:1fr 1fr} }
+.mapeo .item{flex-wrap:wrap;gap:7px;padding:4px 0;border-bottom:none;min-height:30px}
+.mapeo .item .nm{font-size:12.5px}
+.mapeo .item select{flex:1 1 130px;min-width:0;max-width:100%;padding:4px 7px;border:1px solid var(--line);border-radius:7px;font-size:12px;background:#fff;color:var(--ink)}
+.mapeo .item .btn.xs{padding:4px 8px;font-size:11px;border-radius:7px;flex-shrink:0;white-space:nowrap}
 @media(max-width:560px){ .mapeo .item .nm{flex:1 1 100%} }
+.impSolapas{display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:2px 0 10px;margin:0}
+/* En mobile las solapas van en una sola fila que scrollea: si envuelven se comen la tabla */
+@media(max-width:640px){
+  .impSolapas{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .impSolapas .pill{flex-shrink:0}
+  .mapeo{max-height:22vh}
+}
+
+/* Marcar dos patas de una compra/venta de dólares para unirlas en un solo interno */
+.mepBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--green-bg);border:1px solid var(--green-line);border-radius:10px;padding:7px 11px;margin:0 0 8px}
+.mepBar .txt{flex:1;min-width:160px;font-size:12px;color:var(--ink)}
+.mepBar .mal{color:var(--danger);font-weight:600}
+.btnUnir{border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;font-size:12px;line-height:1;padding:4px 7px;color:var(--faint)}
+.btnUnir.on{border-color:var(--blue);background:rgba(37,99,235,.12);color:var(--blue)}
+.tbl tr.unirSel td{background:rgba(37,99,235,.09)}
+
+/* Internos: una tarjeta de dos lados en vez de una fila de tabla */
+.intList{display:flex;flex-direction:column;gap:8px}
+.intCard{border:1px solid var(--line);border-radius:11px;padding:9px 11px;background:var(--card)}
+.intCard.conError{border-color:var(--danger);background:var(--danger-bg)}
+.intCard.dup{opacity:.5}
+.intCard .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;font-weight:600}
+.intCard .top .cpt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.intCard .top .acts{margin-left:auto;display:flex;gap:6px;flex-shrink:0}
+.intCard .top input[type=date]{padding:3px 6px;border:1px solid var(--line);border-radius:7px;font-size:11.5px;background:#fff;color:var(--ink);font-family:'DM Mono',ui-monospace,monospace}
+.intCard .top input[type=checkbox]{width:16px;height:16px;accent-color:var(--green)}
+.intCard .patas{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.intCard .pata{flex:1 1 230px;min-width:0;background:#f8fafc;border:1px solid var(--line);border-radius:9px;padding:6px 9px}
+.intCard .pata .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:700}
+.intCard .pata select,.intCard .pata input[type=number]{width:100%;margin-top:3px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;background:#fff;color:var(--ink)}
+.intCard .pata .mto{font-family:'DM Mono',ui-monospace,monospace;font-size:13px;font-weight:600;margin-top:5px}
+.intCard .pata .mto.sale{color:var(--danger)}
+.intCard .pata .mto.entra{color:var(--green-med)}
+.intCard .flecha{font-size:18px;color:var(--faint);flex-shrink:0}
+.intCard .pie{margin-top:7px;font-size:11.5px;color:var(--green);font-weight:600}
+.intCard .pie.vacio{color:var(--danger)}
+.intCard .pie .de{color:var(--muted);font-weight:500}
+.intVacio{color:var(--muted);font-size:13px;padding:18px 2px;margin:0}
+@media(max-width:560px){ .intCard .flecha{display:none} }
 .tbl td.num{text-align:right;white-space:nowrap;font-weight:600}
 .tbl td.num.pos{color:var(--green-med)}
 .tbl td.num.neg{color:var(--danger)}
@@ -289,8 +349,8 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
    tres lados — acá, en sw.js (nombre del cache) y en Code.gs (const VERSION).
    La app compara la suya con la que publica el backend, así se ve de un vistazo
    si falta pushear el front o re-deployar el Apps Script. */
-const APP_VERSION = "10.2";
-const APP_FECHA   = "2026-09-10";
+const APP_VERSION = "10.3";
+const APP_FECHA   = "2026-09-11";
 const TABS = [
   {id:"resumen",     label:"Resumen",     ic:"📊", fase:4},
   {id:"movimientos", label:"Movimientos", ic:"💸", fase:2},
@@ -1858,11 +1918,22 @@ function cardComposicion(titulo, filasTodas){
 /* ══════════════════════ IMPORTACIÓN DE RESÚMENES ══════════════════════ */
 function modalImportar(){
   const est = { datos:null, filas:[], periodo:"", fechaResumen:"", cuentaArs:"", cuentaUsd:"", archivo:"",
-                modo:"tarjeta", detectadas:[], solapa:"", banco:null, tarjetas:[] };
+                modo:"tarjeta", detectadas:[], solapa:"", banco:null, tarjetas:[],
+                mapeoAbierto:true, mapeoFalta:-1 };
 
   $("#modalRoot").innerHTML = `<div class="overlay" id="ovImp"><div class="modal wide" id="impBody"></div></div>`;
-  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
-  $("#ovImp").onclick = e => { if(e.target.id === "ovImp") cerrar(); };
+  const cerrar = () => { document.removeEventListener("keydown", onTecla); $("#modalRoot").innerHTML = ""; };
+
+  /* A diferencia del resto de los modales, éste NO se cierra por click afuera:
+     un resbalón del mouse tiraba a la basura el mapeo, las categorías y los
+     internos ya armados. Sólo cierra con la ✕ o con Escape, y si hay filas
+     cargadas todavía sin confirmar, pregunta antes. */
+  function intentarCerrar(){
+    if(est.filas.length && !confirm("¿Descartar la importación? Se pierde lo que cargaste.")) return;
+    cerrar();
+  }
+  function onTecla(e){ if(e.key === "Escape"){ e.preventDefault(); intentarCerrar(); } }
+  document.addEventListener("keydown", onTecla);
 
   /* ── Paso 1: archivo ── */
   function vistaArchivo(){
@@ -1879,7 +1950,7 @@ function modalImportar(){
   }
 
   function bindArchivo(){
-    $("#mClose").onclick = cerrar;
+    $("#mClose").onclick = intentarCerrar;
     const zona = $("#dropZone"), input = $("#fileInput");
     zona.onclick = () => input.click();
     input.onchange = () => { if(input.files[0]) leerArchivo(input.files[0]); };
@@ -2027,6 +2098,7 @@ function modalImportar(){
         moneda: m.moneda,
         monto: Math.abs(m.importe),
         tipo: destino ? "Interno" : (m.importe < 0 ? "Egreso" : "Ingreso"),
+        tipoBase: m.importe < 0 ? "Egreso" : "Ingreso",   // a qué vuelve si se deshace el interno
         destinoGrupo: destino || "",
         esPagoTarjeta,
         origen: "banco"
@@ -2065,9 +2137,16 @@ function modalImportar(){
       i, fechaResumen: datos.fecha, categoria: (regla && regla.categoria) || "",
       reglaId: regla ? regla.id : "", categoriaManual: false, nuevaRegla: null,
       sel: true, destinoGrupo: "", esImpuesto: false, esPago: false, observacion: "",
+      tipoBase: datos.tipo === "Interno" ? "Egreso" : datos.tipo,
+      absorbidoPor: null, parAbsorbido: null, unir: false, mep: false,
       ...datos
     };
   }
+
+  /* Una fila absorbida es la pata espejo de un interno: se sigue viendo dentro de
+     la tarjeta del interno, pero no se importa ni cuenta como movimiento aparte.
+     Ojo con el índice 0: `!f.absorbidoPor` daría true para la primera fila. */
+  const absorbida = f => f.absorbidoPor != null;
 
   /** Empareja egresos e ingresos espejo entre cuentas propias del mismo resumen. */
   function sugerirInternos(){
@@ -2084,6 +2163,7 @@ function modalImportar(){
       salida.destinoGrupo = par.grupo;
       salida.sugerido = true;
       salida.categoria = "";
+      salida.parAbsorbido = par.i;
       par.sel = false;                    // la pata espejo no se importa por separado
       par.absorbidoPor = salida.i;
     }
@@ -2182,6 +2262,7 @@ function modalImportar(){
 
   function cambiarTipoFila(i, nuevo){
     const f = est.filas[i];
+    if(f.tipo === "Interno" && nuevo !== "Interno") deshacerUnion(f);
     if(nuevo === "Interno"){
       // Prellenado por el signo: lo que entró ya tiene destino; lo que salió, origen
       const propia = f.cuenta;
@@ -2198,6 +2279,73 @@ function modalImportar(){
     f.tipo = nuevo;
     revisarDuplicados();
     pintar();
+  }
+
+  /** Devuelve a la tabla la pata espejo que este interno había absorbido (MEP o sugerido). */
+  function deshacerUnion(f){
+    const par = f.parAbsorbido != null ? est.filas[f.parAbsorbido] : null;
+    if(par){ par.absorbidoPor = null; par.sel = !par.dup; }
+    f.parAbsorbido = null; f.mep = false; f.mepConceptos = null; f.sugerido = false;
+  }
+
+  /* ── Compra/venta de dólar MEP: dos patas del resumen → un solo Interno ──
+     Una operación MEP sale en el resumen como dos líneas (sale de la caja en
+     dólares, entra en la de pesos, o al revés). Se marcan las dos con el botón
+     ⇄ y se unen: la que sale queda como Interno y la que entra se absorbe, así
+     no se cuenta dos veces. El TC implícito es el MEP de esa operación. */
+  const marcadasUnir = () => est.filas.filter(f => f.unir && !absorbida(f));
+
+  /** Qué le falta al par marcado para poder unirse. Devuelve "" si está listo. */
+  function validarUnion(ms){
+    if(ms.length !== 2) return "Marcá exactamente dos líneas: la que sale y la que entra.";
+    const sale  = ms.filter(f => f.tipo === "Egreso");
+    const entra = ms.filter(f => f.tipo === "Ingreso");
+    if(sale.length !== 1 || entra.length !== 1) return "Tiene que ser una línea que sale y otra que entra.";
+    if(sale[0].grupo === entra[0].grupo) return "Las dos líneas son de la misma cuenta.";
+    if(!sale[0].cuenta || !entra[0].cuenta) return "Falta asignar la cuenta de alguna de las dos.";
+    if(monedaDeCuenta(sale[0].cuenta) === monedaDeCuenta(entra[0].cuenta))
+      return "Las dos cuentas son de la misma moneda: no es una compra/venta de dólares.";
+    return "";
+  }
+
+  function unirComoInterno(){
+    const ms = marcadasUnir();
+    const err = validarUnion(ms);
+    if(err){ toast(err); return; }
+    const sale  = ms.find(f => f.tipo === "Egreso");
+    const entra = ms.find(f => f.tipo === "Ingreso");
+    sale.tipo = "Interno";
+    sale.origenManual  = true; sale.origenId  = sale.cuenta;
+    sale.destinoManual = true; sale.destinoId = entra.cuenta;
+    sale.montoDestino  = entra.monto;
+    sale.categoria = ""; sale.nuevaRegla = null;
+    sale.mep = true;
+    sale.mepConceptos = [sale.concepto, entra.concepto];
+    sale.parAbsorbido = entra.i;
+    entra.absorbidoPor = sale.i;
+    entra.sel = false;
+    sale.unir = entra.unir = false;
+    est.solapa = GRUPO_INTERNOS;
+    revisarDuplicados();
+    pintar();
+  }
+
+  function limpiarUnir(){ est.filas.forEach(f => f.unir = false); pintar(); }
+
+  /** Barra de acción que aparece al marcar filas con el ⇄. */
+  function barraUnir(){
+    const ms = marcadasUnir();
+    if(!ms.length) return "";
+    const err = validarUnion(ms);
+    const detalle = ms.map(f =>
+      `${f.tipo === "Ingreso" ? "entra" : "sale"} ${fmt(f.monto, f.moneda)}`).join(" + ");
+    return `<div class="mepBar">
+      <span class="txt"><b>${ms.length}</b> marcada${ms.length === 1 ? "" : "s"} para unir · ${esc(detalle)}${
+        err ? ` · <span class="mal">${esc(err)}</span>` : ""}</span>
+      <button class="btn primary sm" id="btnUnirMep" ${err ? "disabled" : ""}
+        title="Un MEP es cambiar tu propia plata de una moneda a otra: por eso es un Interno, no un ingreso ni un gasto. El tipo de cambio implícito es cuántos pesos por dólar te quedó.">Unir como interno (compra/venta de dólares)</button>
+      <button class="btn ghost sm" id="btnLimpiarUnir">Cancelar</button>
+    </div>`;
   }
 
   /** Editor inline de un Interno: origen, destino y —si cambian de moneda— el monto que entra. */
@@ -2232,8 +2380,81 @@ function modalImportar(){
     </tr>`;
   }
 
+  /* ── Solapa Internos: una tarjeta de dos lados por movimiento ──
+     Los internos NO se muestran también en la solapa de la cuenta de origen o
+     destino: viven sólo acá, para que en cada cuenta se vean sus ingresos y
+     egresos y nada más. */
+  function tarjetaInterno(f){
+    const org = origenDeFila(f), dst = destinoDeFila(f);
+    const opciones = sel => `<option value="">— elegir —</option>` + cuentasActivas().map(c =>
+      `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)} · ${esc(c.moneda)}</option>`).join("");
+    const monOrg = org ? monedaDeCuenta(org) : f.moneda;
+    const monDst = dst ? monedaDeCuenta(dst) : "";
+    const cambio = org && dst && monOrg !== monDst;
+    const mdst   = montoDestinoDe(f);
+    const tc = cambio ? tcImplicito({ monto:f.monto, montoDestino:mdst,
+                                      moneda:monOrg, monedaDestino:monDst }) : 0;
+    const falta = faltaInterno(f);
+
+    const etiqueta = f.mep ? `<span class="tag usd" title="Compra/venta de dólares armada uniendo dos líneas del resumen">MEP · 2 líneas</span>`
+      : f.esPagoTarjeta ? `<span class="tag ok">pago de tarjeta · detectado</span>`
+      : f.sugerido      ? `<span class="tag ok">detectado</span>`
+                        : `<span class="tag">manual</span>`;
+
+    /* Cuando el origen sale del mapeo (pago de tarjeta), lo que falta no es el
+       interno sino asignar esa cuenta bancaria arriba: lo decimos así. */
+    const pie = falta
+      ? (falta === "Falta la cuenta de origen" && !f.origenManual
+          ? "Asigná la cuenta bancaria en «Cuentas detectadas» y el origen se completa solo"
+          : falta)
+      : cambio
+        ? `Tipo de cambio implícito: $${nf(tc, 2)} por USD`
+        : `Mueve ${fmt(f.monto, monOrg)} entre dos cuentas tuyas`;
+
+    const desdeDos = f.mep && f.mepConceptos
+      ? `<span class="de"> · viene de dos líneas: «${esc(f.mepConceptos[0])}» y «${esc(f.mepConceptos[1])}»</span>` : "";
+
+    return `
+    <div class="intCard ${falta ? "conError" : ""}${f.dup ? " dup" : ""}" data-int="${f.i}">
+      <div class="top">
+        <input type="checkbox" data-sel="${f.i}" ${f.sel ? "checked" : ""} ${f.dup ? "disabled" : ""}>
+        <input type="date" data-fecha="${f.i}" value="${esc(f.fecha)}">
+        <span class="cpt">${esc(f.concepto)}</span>
+        ${etiqueta}
+        <span data-dup="${f.i}">${f.dup ? `<span class="tag off">ya está</span>` : ""}</span>
+        <span class="acts">
+          <button class="btn ghost sm" data-desunir="${f.i}">${f.parAbsorbido != null ? "Separar" : "No es interno"}</button>
+        </span>
+      </div>
+      <div class="patas">
+        <div class="pata">
+          <div class="lbl">Sale de</div>
+          <select data-origen="${f.i}">${opciones(org)}</select>
+          <div class="mto sale">− ${fmt(f.monto, monOrg)}</div>
+        </div>
+        <span class="flecha">→</span>
+        <div class="pata">
+          <div class="lbl">Entra en</div>
+          <select data-destinoc="${f.i}">${opciones(dst)}</select>
+          ${cambio
+            ? `<input type="number" step="0.01" min="0" data-mdest="${f.i}" placeholder="Monto que entra en ${esc(monDst)}" value="${f.montoDestino != null ? esc(f.montoDestino) : ""}">`
+            : `<div class="mto entra">+ ${fmt(f.monto, monDst || monOrg)}</div>`}
+        </div>
+      </div>
+      <div class="pie ${falta ? "vacio" : ""}">${esc(pie)}${desdeDos}</div>
+    </div>`;
+  }
+
+  function vistaInternos(){
+    const ints = est.filas.filter(f => f.tipo === "Interno" && !absorbida(f));
+    const ayuda = `<p class="hint" style="margin:0 0 9px">Un interno mueve plata entre cuentas tuyas: no es ingreso ni gasto. Una compra o venta de dólares (MEP) también es un interno — el tipo de cambio implícito es cuántos pesos por dólar te quedó.</p>`;
+    return `<div class="intWrap">${ayuda}${ints.length
+      ? `<div class="intList">${ints.map(tarjetaInterno).join("")}</div>`
+      : `<p class="intVacio">Todavía no hay internos. Marcá dos líneas con ⇄ en las solapas de cuenta para unirlas, o pasá una fila a «Interno».</p>`}</div>`;
+  }
+
   /** Cantidad de columnas de la tabla según el modo. */
-  const colsTabla = () => est.modo === "cuenta" ? 10 : 9;
+  const colsTabla = () => est.modo === "cuenta" ? 11 : 9;
 
   /** Una fila de la previsualización, con sus dos fechas editables. */
   function filaPreview(f){
@@ -2260,8 +2481,12 @@ function modalImportar(){
 
     const errorInterno = faltaInterno(f);
 
+    /* Marcar dos patas de una MEP para unirlas (sólo en el resumen de cuenta) */
+    const celdaUnir = est.modo === "cuenta" ? `
+      <td style="text-align:center">${esInterno ? "" : `<button class="btnUnir ${f.unir ? "on" : ""}" data-unir="${f.i}" title="Marcar esta línea como una de las dos patas de una compra/venta de dólares (MEP)">⇄</button>`}</td>` : "";
+
     return `
-    <tr data-row="${f.i}" class="${f.dup ? "dup" : ""}${errorInterno ? " conError" : ""}">
+    <tr data-row="${f.i}" class="${f.dup ? "dup" : ""}${errorInterno ? " conError" : ""}${f.unir ? " unirSel" : ""}">
       <td><input type="checkbox" data-sel="${f.i}" ${f.sel ? "checked" : ""} ${f.dup ? "disabled" : ""}></td>
       <td><input type="date" data-fecha="${f.i}" value="${esc(f.fecha)}"></td>
       <td><input type="date" data-fres="${f.i}" value="${esc(f.fechaResumen || f.fecha)}"></td>
@@ -2274,6 +2499,7 @@ function modalImportar(){
       <td><span class="tag ${f.moneda === "USD" ? "usd" : ""}">${f.moneda}</span></td>
       ${celdaCat}
       <td style="text-align:center">${esInterno ? "" : `<input type="checkbox" data-regla="${f.i}" title="Crear una regla a partir de este movimiento" ${f.nuevaRegla ? "checked" : ""}>`}</td>
+      ${celdaUnir}
     </tr>`;
   }
 
@@ -2320,12 +2546,16 @@ function modalImportar(){
     return n === 1 ? "Matchea 1 línea de este resumen" : `Matchea ${n} líneas de este resumen`;
   }
 
-  const cuentaImportar = () => est.filas.filter(f => f.sel && !f.dup).length;
+  const cuentaImportar = () => est.filas.filter(f => f.sel && !f.dup && !absorbida(f)).length;
   const reglasAcrear   = () => est.filas.filter(f => f.nuevaRegla && String(f.nuevaRegla.patron || "").trim()).length;
   function textoPie(){
-    const n = cuentaImportar(), dups = est.filas.filter(f => f.dup).length, r = reglasAcrear();
-    return `${n} de ${est.filas.length} para importar` +
+    const n = cuentaImportar(), r = reglasAcrear();
+    const total  = est.filas.filter(f => !absorbida(f)).length;
+    const dups   = est.filas.filter(f => f.dup && !absorbida(f)).length;
+    const unidas = est.filas.filter(f => absorbida(f)).length;
+    return `${n} de ${total} para importar` +
       (dups ? ` · ${dups} ya estaban cargadas` : "") +
+      (unidas ? ` · ${unidas} ${unidas === 1 ? "línea unida a un interno" : "líneas unidas a internos"}` : "") +
       (r ? ` · ${r} ${r === 1 ? "regla nueva" : "reglas nuevas"}` : "") + ".";
   }
   function textoBoton(){
@@ -2340,9 +2570,9 @@ function modalImportar(){
   function solapas(){
     const grupos = est.detectadas.map(d => ({
       clave: d.clave, nombre: d.nombre,
-      n: est.filas.filter(f => grupoDeFila(f) === d.clave && !f.absorbidoPor).length
+      n: est.filas.filter(f => grupoDeFila(f) === d.clave && !absorbida(f)).length
     })).filter(g => g.n);
-    const internos = est.filas.filter(f => f.tipo === "Interno").length;
+    const internos = est.filas.filter(f => f.tipo === "Interno" && !absorbida(f)).length;
     if(internos) grupos.push({ clave: GRUPO_INTERNOS, nombre: "Internos / transferencias", n: internos });
     if(!grupos.some(g => g.clave === est.solapa)) est.solapa = (grupos[0] || {}).clave || "";
     return grupos;
@@ -2352,63 +2582,82 @@ function modalImportar(){
     const gs = solapas();
     const t  = est.banco.totales || {};
     const conc = Object.entries(t).map(([mon, v]) =>
-      `${mon === "USD" ? "Dólares" : "Pesos"}: ${v.coincide ? "✓" : "✗"} calculado ${fmt(v.calculado, mon)} vs resumen ${v.resumen == null ? "—" : fmt(v.resumen, mon)}`).join(" · ");
+      `<span class="${v.coincide ? "ok" : "mal"}">${mon === "USD" ? "U$S" : "$"} ${v.coincide ? "✓" : "✗"}</span> ${fmt(v.calculado, mon)}${
+        v.resumen == null ? "" : ` vs ${fmt(v.resumen, mon)}`}`).join(" · ");
 
     /* Se mapea toda cuenta que aparezca: como origen de movimientos o como
        destino de un interno (una tarjeta puede recibir un pago sin tener
        consumos propios en este resumen). */
     const usadas = new Set();
     est.filas.forEach(f => { usadas.add(f.grupo); if(f.destinoGrupo) usadas.add(f.destinoGrupo); });
+    const aMapear   = est.detectadas.filter(d => usadas.has(d.clave));
+    const sinMapear = aMapear.filter(d => !d.cuentaApp).length;
 
-    const mapeo = est.detectadas.filter(d => usadas.has(d.clave)).map(d => {
+    /* El mapeo es un paso que se hace una vez: arranca abierto mientras falte
+       asignar algo y se colapsa solo apenas está completo, para que el centro
+       de la pantalla sea la tabla de movimientos. */
+    if(est.mapeoFalta !== sinMapear){
+      est.mapeoAbierto = sinMapear > 0;
+      est.mapeoFalta   = sinMapear;
+    }
+
+    const mapeo = aMapear.map(d => {
       const cand = cuentasActivas().filter(c => c.moneda === d.moneda);
       const n = est.filas.filter(f => f.grupo === d.clave).length;
       return `
       <div class="item">
-        <span style="width:20px;text-align:center;flex-shrink:0">${d.clase === "tarjeta" ? "💳" : "🏦"}</span>
+        <span style="width:18px;text-align:center;flex-shrink:0">${d.clase === "tarjeta" ? "💳" : "🏦"}</span>
         <span class="nm">${esc(d.nombre)} <span class="tag">${d.moneda}</span> <span class="tag">${n} mov.</span></span>
         <select data-mapa="${esc(d.clave)}">
           <option value="">— elegir cuenta —</option>
           ${cand.map(c => `<option value="${esc(c.id)}" ${d.cuentaApp === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}
         </select>
-        ${d.cuentaApp ? "" : `<button class="btn ghost sm" data-crear="${esc(d.clave)}" style="flex-shrink:0;white-space:nowrap">Crear</button>`}
+        ${d.cuentaApp ? "" : `<button class="btn ghost xs" data-crear="${esc(d.clave)}">Crear</button>`}
       </div>`;
     }).join("");
 
+    const cabMapeo = sinMapear
+      ? `Cuentas detectadas · <span class="falta">Falta asignar ${sinMapear} ${sinMapear === 1 ? "cuenta" : "cuentas"}</span>`
+      : `Cuentas detectadas · <span class="listo">${aMapear.length} asignadas ✓</span>`;
+
+    const esInternos = est.solapa === GRUPO_INTERNOS;
     const filasHtml = est.filas
-      .filter(f => grupoDeFila(f) === est.solapa && !f.absorbidoPor)
-      .map(f => filaPreview(f) + (f.tipo === "Interno" ? editorInterno(f) : "") + (f.nuevaRegla ? editorRegla(f) : "")).join("");
+      .filter(f => grupoDeFila(f) === est.solapa && !absorbida(f))
+      .map(f => filaPreview(f) + (f.nuevaRegla ? editorRegla(f) : "")).join("");
 
-    const sinMapear = est.detectadas.filter(d => !d.cuentaApp && usadas.has(d.clave)).length;
-
-    return `
-      <div class="impHead">
-      <button class="close" id="mClose">×</button>
-      <h3>Resumen de cuenta Santander</h3>
-      <p class="hint">${esc(est.archivo)} · ${est.detectadas.length} cuentas detectadas · ${est.filas.length} movimientos${est.tarjetas.length ? ` · ${est.tarjetas.length} ${est.tarjetas.length === 1 ? "tarjeta embebida" : "tarjetas embebidas"}` : ""}</p>
-      ${conc ? `<p class="hint" style="margin:2px 0 10px">Saldos del resumen — ${conc}.</p>` : ""}
-
-      <p class="hint" style="margin:14px 0 2px"><b>Cuentas detectadas</b> — asigná cada una a una cuenta de la app.</p>
-      <div class="mapeo">${mapeo}</div>
-
-      <div class="filtros" style="margin-top:14px">
-        ${gs.map(g => `<button class="pill ${est.solapa === g.clave ? "on" : ""}" data-solapa="${esc(g.clave)}">${esc(g.nombre)} · ${g.n}</button>`).join("")}
-      </div>
-      </div>
-
-      <div class="impTabla">
+    const cuerpo = esInternos ? vistaInternos() : `
       <div class="tblwrap">
         <table class="tbl">
           <thead><tr>
             <th><input type="checkbox" id="selTodos"></th>
             <th>Fecha consumo</th><th>Fecha resumen</th><th class="flex">Concepto</th><th>Cuenta</th><th>Tipo</th>
-            <th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría / destino</th><th>Regla</th>
+            <th style="text-align:right">Monto</th><th>Moneda</th><th>Categoría / destino</th><th>Regla</th><th title="Unir dos líneas como una compra/venta de dólares">Unir</th>
           </tr></thead>
           <tbody>${filasHtml}</tbody>
         </table>
+      </div>`;
+
+    return `
+      <div class="impHead">
+      <button class="close" id="mClose">×</button>
+      <h3>Resumen de cuenta Santander</h3>
+      <p class="impLinea"><span>${esc(est.archivo)} · ${est.detectadas.length} cuentas · ${est.filas.length} movimientos${
+        est.tarjetas.length ? ` · ${est.tarjetas.length} ${est.tarjetas.length === 1 ? "tarjeta embebida" : "tarjetas embebidas"}` : ""}</span>${
+        conc ? `<span>Saldos: ${conc}</span>` : ""}</p>
+
+      <div class="mapBox ${est.mapeoAbierto ? "abierto" : ""}">
+        <button type="button" class="cab" id="mapToggle">${cabMapeo}<span class="chev">▸</span></button>
+        ${est.mapeoAbierto ? `<div class="mapeo">${mapeo}</div>` : ""}
       </div>
 
+      ${barraUnir()}
+
+      <div class="impSolapas">
+        ${gs.map(g => `<button class="pill ${est.solapa === g.clave ? "on" : ""}" data-solapa="${esc(g.clave)}">${esc(g.nombre)} · ${g.n}</button>`).join("")}
       </div>
+      </div>
+
+      <div class="impTabla">${cuerpo}</div>
 
       <div class="impPie">
         <p class="hint" style="margin:0" id="impPie">${textoPie()}</p>
@@ -2457,7 +2706,7 @@ function modalImportar(){
     const filasHtml = est.filas.map(f => filaPreview(f) + (f.tipo === "Interno" ? editorInterno(f) : "") + (f.nuevaRegla ? editorRegla(f) : "")).join("");
 
     return `
-      <div class="impHead">
+      <div class="impHead scroll">
       <button class="close" id="mClose">×</button>
       <h3>${esc(est.datos.emisor)}${est.datos.numero ? " ·· " + esc(est.datos.numero) : ""}</h3>
       <p class="hint">${esc(est.archivo)} · ${est.datos.lineas.length} líneas detectadas</p>
@@ -2518,12 +2767,18 @@ function modalImportar(){
   function refrescarPie(){
     const pie = $("#impPie"); if(pie) pie.textContent = textoPie();
     const btn = $("#btnImportar");
-    if(btn && !btn.disabled || btn && cuentaImportar()){ btn.textContent = textoBoton(); }
-    if(btn) btn.disabled = !cuentaImportar();
+    if(!btn) return;
+    btn.textContent = textoBoton();
+    // Con el resumen de cuenta no se puede importar hasta mapear todas las cuentas
+    const usadas = new Set();
+    est.filas.forEach(f => { usadas.add(f.grupo); if(f.destinoGrupo) usadas.add(f.destinoGrupo); });
+    const sinMapear = est.modo === "cuenta"
+      ? est.detectadas.filter(d => !d.cuentaApp && usadas.has(d.clave)).length : 0;
+    btn.disabled = !cuentaImportar() || !!sinMapear;
   }
   function refrescarFila(i){
     const f = est.filas[i];
-    const tr = $(`tr[data-row="${i}"]`);
+    const tr = $(`tr[data-row="${i}"]`) || $(`.intCard[data-int="${i}"]`);
     if(!tr) return;
     tr.classList.toggle("dup", !!f.dup);
     const chk = $(`[data-sel="${i}"]`);
@@ -2548,7 +2803,7 @@ function modalImportar(){
   }
 
   function bindPreview(){
-    $("#mClose").onclick = cerrar;
+    $("#mClose").onclick = intentarCerrar;
 
     if(est.modo === "cuenta"){
       $$("[data-mapa]").forEach(sel => sel.onchange = () => {
@@ -2559,6 +2814,20 @@ function modalImportar(){
       });
       $$("[data-crear]").forEach(b => b.onclick = ev => crearCuentaDetectada(b.dataset.crear, ev.currentTarget));
       $$("[data-solapa]").forEach(b => b.onclick = () => { est.solapa = b.dataset.solapa; pintar(); });
+      $("#mapToggle").onclick = () => { est.mapeoAbierto = !est.mapeoAbierto; pintar(); };
+      $$("[data-unir]").forEach(b => b.onclick = () => {
+        const f = est.filas[+b.dataset.unir];
+        f.unir = !f.unir;
+        pintar();
+      });
+      const btnUnir = $("#btnUnirMep");
+      if(btnUnir) btnUnir.onclick = unirComoInterno;
+      const btnLimpiar = $("#btnLimpiarUnir");
+      if(btnLimpiar) btnLimpiar.onclick = limpiarUnir;
+      $$("[data-desunir]").forEach(b => b.onclick = () => {
+        const f = est.filas[+b.dataset.desunir];
+        cambiarTipoFila(f.i, f.tipoBase || "Egreso");
+      });
       $$("[data-grupo]").forEach(sel => sel.onchange = () => {
         const f = est.filas[+sel.dataset.grupo];
         f.grupo = sel.value;
@@ -2582,8 +2851,10 @@ function modalImportar(){
       if(btnUsd) btnUsd.onclick = ev => crearCuentaUsd(ev.currentTarget);
     }
 
-    $("#selTodos").onchange = e => {
-      est.filas.forEach(f => { if(!f.dup) f.sel = e.target.checked; });
+    // En la solapa de internos no hay tabla: el "todos" es de la tabla nomás
+    const todos = $("#selTodos");
+    if(todos) todos.onchange = e => {
+      est.filas.forEach(f => { if(!f.dup && !absorbida(f)) f.sel = e.target.checked; });
       est.filas.forEach(f => refrescarFila(f.i));
       refrescarPie();
     };
@@ -2730,7 +3001,7 @@ function modalImportar(){
   }
 
   async function confirmar(btn){
-    const sel = est.filas.filter(f => f.sel && !f.dup && !f.absorbidoPor);
+    const sel = est.filas.filter(f => f.sel && !f.dup && !absorbida(f));
     if(!sel.length){ toast("No hay filas para importar"); return; }
     if(sel.some(f => !f.cuenta)){
       toast(est.modo === "cuenta" ? "Falta asignar alguna cuenta detectada"

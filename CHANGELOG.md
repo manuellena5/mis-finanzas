@@ -1,5 +1,39 @@
 # Changelog
 
+## v10.3 — UX del importador: modal, mapeo colapsable, solapas fijas, internos claros y MEP (2026-09-11) ✅
+
+Ajustes de usabilidad sobre la importación del resumen de cuenta (Fases 10 / 10.1 / 10.2) y el manejo de la compra/venta de dólar MEP. **Sólo frontend: no toca el parser, la lógica del backend ni el modelo de datos.** `Code.gs` cambia únicamente en `VERSION`, que va en sincronía con `index.html` y `sw.js`: hay que **re-deployar el Apps Script** o el chip del header queda en rojo avisando el desfasaje.
+
+**El modal ya no se cierra por accidente**
+Un resbalón del mouse afuera del modal tiraba a la basura el mapeo, las categorías y los internos ya armados. Ahora el click en el overlay **no cierra**: sólo la ✕ o `Escape`, y si hay filas cargadas sin confirmar pregunta *"¿Descartar la importación? Se pierde lo que cargaste."* antes de descartar. Sin filas cargadas (paso del archivo) cierra directo. El resto de los modales queda como estaba.
+
+**"Cuentas detectadas" compacto y colapsable**
+- El bloque de mapeo pasa a ser un acordeón con header `Cuentas detectadas · Falta asignar 3 cuentas` (en rojo) o `· 5 asignadas ✓` (en verde), con chevron.
+- **Se colapsa solo** apenas todas las cuentas quedan asignadas, y se vuelve a abrir si alguna queda suelta. El click del usuario manda hasta el próximo cambio.
+- Filas más chicas y, en desktop (≥900px), en **dos columnas**. El botón *Crear* queda pero más chico.
+- La conciliación de saldos pasa de dos párrafos a **una línea** junto al nombre del archivo: `Saldos: $ ✓ … · U$S ✓ …`.
+
+**Solapas y títulos de columna fijos**
+La cabecera del modal (resumen + mapeo + solapas) dejó de scrollear: era `overflow:auto; max-height:42vh` y con el mapeo abierto las solapas se iban de pantalla. Ahora scrollea **sólo el cuerpo**, con el `thead` sticky adentro, así que al recorrer los movimientos siempre se ven las solapas y los títulos de columna. El pie con el contador y el botón **Importar** ya estaba fijo. En mobile las solapas van en **una sola fila que scrollea de costado** en vez de envolver en cuatro renglones que se comían la tabla.
+
+**Solapa "Internos / transferencias" rediseñada**
+- Cada interno se muestra como una **tarjeta de dos lados** (`Sale de` → `Entra en`) con el monto de cada pata, en vez de una fila de tabla con un editor colgando abajo. Si cambian de moneda, el lado que entra pide el monto y abajo se lee el **tipo de cambio implícito**.
+- Un tag distingue los **autodetectados** (`pago de tarjeta · detectado`, `detectado`) de los **manuales**, y los armados uniendo dos líneas (`MEP · 2 líneas`).
+- En un **pago de tarjeta**, `Sale de` se completa solo con la cuenta de la app mapeada a esa cuenta bancaria y sigue el mapeo si se cambia. Mientras esa cuenta no esté asignada, el cartel ya no es el críptico *"Falta la cuenta de origen"* sino *"Asigná la cuenta bancaria en «Cuentas detectadas» y el origen se completa solo"*.
+- Botón **No es interno** / **Separar** para revertir, y validación por tarjeta igual que antes (origen y destino, distintos, monto que entra > 0), con la tarjeta en rojo si falta algo.
+
+**Compra/venta de dólar MEP: unir dos líneas en un Interno**
+Una MEP aparece en el resumen como dos movimientos —uno que sale de la caja en dólares y otro que entra en la de pesos, o al revés—. Ahora se pueden unir:
+- Botón **⇄** por fila en las solapas de cuenta para marcar cada pata. La marca **sobrevive al cambio de solapa** (las dos patas están en cuentas distintas), y una barra arriba muestra qué hay marcado y qué falta.
+- **Unir como interno** crea un solo `tipo:"Interno"`: `cuenta`/`monto`/`moneda` = la pata que sale, `cuentaDestino`/`montoDestino`/`monedaDestino` = la que entra, y muestra el **TC implícito** (`montoDestino / monto`) — el MEP de esa operación.
+- La otra línea **se absorbe**: no se importa, así no se duplica, y la tarjeta deja a la vista de qué dos líneas vino. El contador del pie lo dice (`7 de 7 para importar · 1 línea unida a un interno`).
+- Se puede **deshacer** con *Separar*: las dos filas vuelven a sus solapas como estaban.
+- Sólo une una pata que sale con una que entra, de cuentas distintas y de **distinta moneda**; si no, la barra explica por qué no se puede. El modelo detallado vía broker sigue disponible con el control de la 10.1: esto es el atajo para el caso simple (Santander USD ↔ Santander pesos).
+
+**Bug latente corregido**: las filas absorbidas se filtraban con `!f.absorbidoPor`, que da `true` para la fila de índice **0** — la primera línea del resumen, si quedaba absorbida, se contaba igual. Ahora hay un helper `absorbida(f)` que compara contra `null`, usado en las solapas, el contador y el confirmar. También el botón **Importar** ahora se deshabilita si falta mapear una cuenta aunque se refresque el pie sin repintar (antes sólo lo frenaba el confirmar, con un toast).
+
+**Verificado** sobre un resumen fabricado (3 cuentas bancarias + 1 tarjeta embebida con pata en dólares, 8 movimientos): el click afuera no cierra y la ✕ con filas cargadas pregunta antes de descartar (cancelar deja todo). El mapeo arranca abierto con *Falta asignar 3 cuentas* y **se colapsa solo** al asignar la tercera. Con la tabla scrolleada 400px, el `thead` queda pegado al borde del cuerpo y las solapas siguen a la vista. El pago de tarjeta muestra `Caja de Ahorro $ → Visa Santander` sin error una vez mapeada la cuenta. Marcar la línea de `u$s 500` que sale y la de `$625.000` que entra y unirlas dejó un Interno **USD→ARS** con TC implícito **$1.250,00 por USD**, y el total bajó de 8 a 7 movimientos; *Separar* las devolvió a sus solapas y volvió a 8. La importación mandó los 7 movimientos con la MEP como `cuenta: Santander USD / monto 500 / USD → cuentaDestino: Caja de Ahorro $ / montoDestino 625000 / ARS`. Sin errores de consola recorriendo todas las solapas, y en 375px el modal mide 360×747 con la cabecera en 182px una vez colapsado el mapeo, sin scroll horizontal de página.
+
 ## v10.2 — Versión visible (2026-09-10) ✅
 
 Un número de versión a la vista, para saber si el navegador está corriendo lo último y si el backend está al día. **Toca `Code.gs`: requiere re-deploy** (una vez; después el propio cartel avisa cuando haga falta).

@@ -6,7 +6,7 @@
    - Llamadas al Apps Script: no se interceptan (son POST y siempre van a la red).
 */
 /* Misma versión que index.html y Code.gs: al subirla, el cache viejo se descarta. */
-const APP_VERSION = "10.2";
+const APP_VERSION = "10.3";
 const CACHE = "mis-finanzas-v" + APP_VERSION;
 
 // Lectores de resúmenes: .xlsx (SheetJS) y .pdf (pdf.js, con su worker)

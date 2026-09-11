@@ -8,7 +8,7 @@ HTML + CSS + JS vanilla en un único `index.html`, **PWA** instalable, con **Goo
 
 ## Versión
 
-La app muestra su versión en el header (`v10.2`) y, en **Ajustes → Versión**, la compara con la que publica el backend: así se ve si el navegador quedó con una copia cacheada o si falta re-deployar el Apps Script. El botón **Buscar actualizaciones** borra el cache y recarga.
+La app muestra su versión en el header (`v10.3`) y, en **Ajustes → Versión**, la compara con la que publica el backend: así se ve si el navegador quedó con una copia cacheada o si falta re-deployar el Apps Script. El botón **Buscar actualizaciones** borra el cache y recarga.
 
 Al hacer cualquier cambio hay que subir el número en los **tres** lugares, que deben coincidir: `APP_VERSION` en `index.html`, `APP_VERSION` en `sw.js` (define el nombre del cache) y `VERSION` en `Code.gs`.
 
