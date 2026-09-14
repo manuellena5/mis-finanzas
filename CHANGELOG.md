@@ -1,5 +1,42 @@
 # Changelog
 
+## Fase 11 — Posición de broker: efectivo + tenencias (PPI y Balanz) (2026-09-11) ✅
+
+Un PDF del broker actualiza de una sola pasada **las dos partes** de lo que tenés ahí, sin doble conteo:
+
+- **Efectivo / disponibilidades** (la plata sin invertir, por moneda) → el saldo de una cuenta de la app (`Balanz ARS`, `PPI USD`, …).
+- **Tenencias valorizadas** (acciones, CEDEARs, ON, FCI) → Inversiones.
+
+La regla de oro es que **efectivo del broker + tenencias = total de cartera del resumen**. Los dos son complementarios y no se pisan. **No se genera ningún movimiento**: la posición es una foto, no un historial de boletos. Las compras y ventas adentro del broker se reflejan solas al reimportar (baja el efectivo, suben las tenencias). La transferencia banco → broker se sigue registrando aparte, como Interno.
+
+**Sólo frontend**: usa `saveInversiones`, `deleteInversion` y `saveCuenta`, que ya existían. `Code.gs` cambia únicamente en `VERSION`, así que hay que **re-deployar el Apps Script** para que el chip del header no quede en rojo.
+
+**Parsers**
+- **PPI** ("Estado de cuenta"): total de cartera (`$ 1.973.654,96` / `U$D 1.307,06`), la fila **Saldo hoy** de DISPONIBILIDADES —que trae pesos y los dólares partidos en *divisas* y *billetes*, que son el mismo bolsillo y se suman— y las tenencias bajo cada tipo de activo. Se lee además el **Dolar BNA** que el propio resumen dice haber usado para valorizar.
+- **Balanz** ("Posición consolidada"): `Total $`, el bloque **Monedas** (Pesos, Dólares y *US Dollar (Cable)*, que también es dólares y se suma), el **MEP** de la fecha y las tenencias por tipo.
+- El **PDF de PPI viene con contraseña**: `pdfLineasConClave()` la pide, reintenta si está mal y avisa si se cancela. El resto de los PDF no cambia.
+- El broker se detecta por el texto; si no es ninguno de los dos, el archivo sigue por el camino de tarjeta o resumen de cuenta como antes.
+
+**Previsualización**
+Tabla de tenencias (especie, tipo, cantidad, precio, valor) con su total, las líneas de efectivo por moneda con el select de cuenta —autocompletado por nombre, con botón para **crear** `«Balanz USD»` si no existe— y la **reconciliación** `efectivo + tenencias` vs el total del resumen, con ✓/✗ e importe de la diferencia. Es **informativa y no bloquea**; lo único que bloquea es no haber asignado la cuenta de efectivo.
+
+**El efectivo se fija, no se suma**
+El saldo del resumen es un *snapshot*. Como el saldo de una cuenta se calcula `saldoInicial + todos los movimientos`, guardar el efectivo tal cual lo hubiera **sumado** a una transferencia ya registrada. Lo que se guarda es `efectivo − movimientos hasta la fecha del resumen`, con `fechaInicial` en esa fecha: la cuenta muestra exactamente lo que dice el broker y los movimientos posteriores siguen acumulando encima.
+
+**Tenencias: foto que reemplaza**
+Reemplaza sólo las de **ese** broker y deja los demás intactos. Las especies que siguen estando **conservan su id** (editarlas no corta el historial), las nuevas se dan de alta y las que ya no aparecen se dan de baja. El valor que se guarda es `cantidad × precio` —que es lo que deriva el backend—; cuando difiere del que imprime el resumen, la fila lo marca con un tag `redondeo`.
+
+**Aviso de doble conteo, afinado**
+El de la Fase 6 se disparaba con **cualquier** cuenta de tipo Inversión con saldo, así que las cuentas de efectivo del broker daban falsa alarma permanente. Ahora sólo avisa cuando el saldo de la cuenta **se parece** (±2%) al total de tenencias de algún broker, que es el caso en el que realmente está duplicando.
+
+**Verificado con los dos archivos reales**
+- **PPI** (`Resumen de cuenta 265095.pdf`, con clave): total de cartera **$1.973.654,96 / u$s 1.307,06**, TC del resumen **$1.510,00**, 4 tenencias (MSFT, NU, QQQ, T) por **$1.973.460**, efectivo **−$16,44** y **u$s 0,14**. La reconciliación **cierra exacto**: −16,44 + 0,14 × 1.510 + 1.973.460 = 1.973.654,96.
+- **Balanz** (`ResumenDeCuenta_20260702.pdf`): 12 tenencias (TRAN, YPFD, ADBE, BRKB, CL, KO, PG, RZABO, TLCPO, VSCRO, YMCJO, ESTRA1A) por **$7.937.570**, efectivo **−$17,06** y **u$s 301,57** (Dólares 300,47 + Cable 1,10), **MEP $1.531,94** leído. La reconciliación da **✗ por $3.080.962,91**, y no es el parser: el `Total $ 11.480.503` de la primera página **no coincide con la suma de los propios Instrumentos del PDF** ($1.853.985 + $3.549.850 + $2.531.723 + $2.012 = $7.937.570) ni sumándole las Monedas. Se muestra la diferencia y se deja importar.
+- **Reemplazo por broker**: reimportar Balanz deja 12 tenencias (no 24), con los mismos ids, PPI intacto, y una tenencia inventada que ya no figuraba en el resumen se dio de baja.
+- **Efectivo como saldo**: con un Interno de $500.000 de Santander a `Balanz ARS` fechado antes del resumen, importar deja la cuenta en **−$17,06** (el saldo del resumen) y no en $499.982,94. El Interno por sí solo no mueve el patrimonio, y después de importar el patrimonio suma efectivo y tenencias **una sola vez**.
+- **Aviso de doble conteo**: con las 4 cuentas de efectivo de broker no aparece; al agregar una cuenta "Cartera Balanz (manual)" con saldo igual al total de tenencias, aparece.
+- Sin errores de consola en ninguno de los dos flujos, y los imports de tarjeta y de resumen de cuenta siguen andando igual. En 375px el modal mide 360×747, la cabecera queda en 341px, la tabla se lleva 273px y la página no scrollea de costado.
+
 ## v10.5 — Las filas sin categoría se ven (2026-09-11) ✅
 
 Al revisar un resumen largo, las filas que todavía no tienen categoría se perdían entre las demás: el select decía *"Sin categoría"* con el mismo gris que el resto. Ahora ese select se pinta en **ámbar** (borde, fondo y texto), así que de un vistazo se ve qué queda por categorizar. Se apaga apenas elegís una categoría y vuelve si la sacás, sin repintar la tabla.

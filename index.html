@@ -260,6 +260,21 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
 .mapeo .item .btn.xs{padding:4px 8px;font-size:11px;border-radius:7px;flex-shrink:0;white-space:nowrap}
 @media(max-width:560px){ .mapeo .item .nm{flex:1 1 100%} }
 .impSolapas{display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:2px 0 10px;margin:0}
+
+/* Posición de broker: el mapeo del efectivo (una línea por moneda) */
+.efBox{border:1px solid var(--line);border-radius:10px;padding:8px 11px;margin:2px 0 0}
+.efBox > .cab{font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:4px}
+.efLinea{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;border-top:1px solid #f1f5f9}
+.efLinea .lbl{font-size:12.5px;color:var(--muted);font-weight:500;flex:0 0 auto}
+.efLinea .mto{font-size:13.5px;font-weight:700;flex:0 0 auto}
+.efLinea select{flex:1 1 180px;min-width:0;padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12.5px;background:#fff;color:var(--ink)}
+.efLinea.falta select{border-color:var(--warn-line);background:var(--warn-bg);color:var(--warn);font-weight:600}
+.efLinea .btn.xs{padding:4px 8px;font-size:11px;border-radius:7px;flex-shrink:0;white-space:nowrap}
+.modal.imp .tbl tfoot td{border-top:2px solid var(--line);padding:8px;background:#f8fafc;position:sticky;bottom:0}
+@media(max-width:560px){
+  .efLinea .lbl{flex:1 1 100%}
+  .efBox .hint{font-size:11.5px;line-height:1.4}
+}
 /* En mobile las solapas van en una sola fila que scrollea: si envuelven se comen la tabla */
 @media(max-width:640px){
   .impSolapas{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
@@ -353,7 +368,7 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
    tres lados — acá, en sw.js (nombre del cache) y en Code.gs (const VERSION).
    La app compara la suya con la que publica el backend, así se ve de un vistazo
    si falta pushear el front o re-deployar el Apps Script. */
-const APP_VERSION = "10.5";
+const APP_VERSION = "11.0";
 const APP_FECHA   = "2026-09-11";
 const TABS = [
   {id:"resumen",     label:"Resumen",     ic:"📊", fase:4},
@@ -628,9 +643,10 @@ function lastMoney(linea){
  * Conservamos la posición de cada fragmento porque el resumen de cuenta usa
  * columnas (Caja de Ahorro / Cuenta Corriente) que sólo se distinguen por `x`.
  */
-async function pdfLineasItems(file){
+async function pdfLineasItems(file, password){
   const buf = await file.arrayBuffer();
-  const doc = await pdfjsLib.getDocument({data:buf}).promise;
+  const opciones = password == null ? {data:buf} : {data:buf, password};
+  const doc = await pdfjsLib.getDocument(opciones).promise;
   const lineas = [];
   for(let p = 1; p <= doc.numPages; p++){
     const page = await doc.getPage(p);
@@ -648,6 +664,25 @@ async function pdfLineasItems(file){
     });
   }
   return lineas;
+}
+
+/**
+ * Igual que pdfLineasItems, pero si el PDF está protegido pide la clave y
+ * reintenta. El resumen de PPI viene siempre con contraseña.
+ */
+async function pdfLineasConClave(file){
+  let password;
+  for(let intento = 0; intento < 4; intento++){
+    try{
+      return await pdfLineasItems(file, password);
+    }catch(e){
+      if(!e || e.name !== "PasswordException") throw e;
+      const reintento = password !== undefined;
+      password = prompt(reintento ? "Esa clave no era. Probá de nuevo:" : "Este PDF tiene contraseña. Ingresala:");
+      if(password == null) throw new Error("Hace falta la contraseña para leer el PDF");
+    }
+  }
+  throw new Error("No pude abrir el PDF con esa contraseña");
 }
 
 /** Sólo el texto de cada línea (lo que usan los parsers de tarjeta suelta). */
@@ -977,6 +1012,140 @@ function detectarEmisor(aoa){
   else if(texto.includes("visa")) emisor = "Visa";
   const m = texto.match(/terminada en\s*(\d{3,4})/);
   return { emisor, numero: m ? m[1] : "" };
+}
+
+/* ══════════════════════ POSICIÓN DE BROKER (PPI / Balanz) ══════════════════════
+   Un resumen de broker tiene dos bolsillos que se importan juntos y no se pisan:
+     · efectivo / disponibilidades → saldo de una cuenta de la app
+     · tenencias valorizadas       → Inversiones
+   La regla de oro es que efectivo + tenencias = total de cartera del resumen.
+   No genera movimientos: las compras y ventas dentro del broker se reflejan
+   actualizando la foto (baja el efectivo, suben las tenencias). */
+
+/** Qué broker es este PDF, o "" si no es una posición de broker. */
+function detectarBroker(lineas){
+  const texto = lineas.slice(0, 25).map(l => l.texto).join(" ").toLowerCase();
+  if(/portfolio personal|pp inversiones/.test(texto) && !/balanz/.test(texto)) return "PPI";
+  if(/balanz/.test(texto) && /posici[oó]n|tenencia/.test(texto)) return "Balanz";
+  return "";
+}
+
+/** dd/mm/aaaa → ISO. Los resúmenes de broker traen el año con cuatro dígitos. */
+function ddmmyyyyToIso(s){
+  const m = String(s || "").match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : "";
+}
+
+/**
+ * PPI — "Estado de cuenta".
+ * Tenencias: `ESPECIE Descripción cantidad 0,00 AR$ precio $ valor pct %`.
+ * Efectivo: la fila "Saldo hoy" de DISPONIBILIDADES, que trae los pesos y los
+ * dólares partidos en divisas y billetes (`$ -16,44 U$D 0,00 U$D 0,14`); los
+ * dos dólares son el mismo bolsillo y se suman.
+ * El resumen dice a qué dólar valorizó (Dolar BNA), y con ése cierra la cuenta.
+ */
+function parsePosicionPPI(lineas){
+  const tenencias = [];
+  let grupo = "", totalARS = null, totalUSD = null, fecha = "", tc = null;
+  let vioDisponibilidades = false, efectivoARS = null, efectivoUSD = null;
+
+  for(const l of lineas){
+    const t = l.texto.trim();
+
+    // "Cuenta 265095 - 04/07/2026"
+    if(!fecha){
+      const f = t.match(/Cuenta\s+\d+\s*[-–]\s*(\d{2}\/\d{2}\/\d{4})/i);
+      if(f) fecha = ddmmyyyyToIso(f[1]);
+    }
+
+    // "$ 1.973.654,96 U$D 1.307,06"
+    const tot = t.match(/^\$\s*([\d.]+,\d{2})\s+U\$D\s*([\d.]+,\d{2})/);
+    if(tot && totalARS == null){ totalARS = parseNum(tot[1]); totalUSD = parseNum(tot[2]); }
+
+    // "(*) Dólares ... al tipo de cambio actual Dolar BNA ... al día ($1.510,00)"
+    if(tc == null && /tipo de cambio/i.test(t)){
+      const mt = t.match(/\(\s*\$\s*([\d.]+,\d{2})\s*\)/);
+      if(mt) tc = parseNum(mt[1]);
+    }
+
+    if(/^DISPONIBILIDADES/i.test(t)){ vioDisponibilidades = true; continue; }
+
+    /* Sólo la fila "Saldo hoy": las otras ("24 horas", "operaciones pendientes")
+       son proyecciones del mismo saldo, sumarlas lo contaría de más. */
+    if(vioDisponibilidades && /^Saldo hoy\b/i.test(t)){
+      const mars = t.match(/(?:^|\s)\$\s*(-?[\d.]+,\d{2})/);
+      if(mars) efectivoARS = parseNum(mars[1]);
+      for(const m of t.matchAll(/U\$[DS]\s*(-?[\d.]+,\d{2})/gi)) efectivoUSD = (efectivoUSD || 0) + parseNum(m[1]);
+      continue;
+    }
+
+    if(esGrupoPPI(t)){ grupo = t; continue; }
+
+    // MSFT Microsoft 36,00 0,00 AR$ 20.790,00 $ 748.440,00 37,92 %
+    const m = t.match(/^([A-Z0-9]{1,7})\s+(.+?)\s+([\d.]+,\d{2})\s+[\d.]+,\d{2}\s+AR\$\s*([\d.]+,\d{2})\s+\$\s*([\d.]+,\d{2})/);
+    if(m) tenencias.push({
+      especie: m[1], descripcion: m[2].trim(), tipoActivo: grupo || "Otros",
+      cantidad: parseNum(m[3]), precio: parseNum(m[4]), valorARS: parseNum(m[5]), moneda: "ARS"
+    });
+  }
+
+  return { broker:"PPI", fecha, totalARS, totalUSD, efectivoARS, efectivoUSD, mep:null, tc, tenencias };
+}
+
+/** Encabezado de un tipo de activo (una o dos palabras, sin importes). */
+function esGrupoPPI(t){
+  return /^(Cedears?|Acciones|Bonos|T[ií]tulos|Letras|Obligaciones|Fondos|Cauciones|FCI)\b/i.test(t) &&
+         t.split(/\s+/).length <= 3 && !/\d/.test(t);
+}
+
+/**
+ * Balanz — "Posición consolidada".
+ * Tenencias: `ESPECIE Descripción cantidad 0.00 $ precio $ valor`.
+ * Efectivo: el bloque Monedas — Pesos, Dólares y US Dollar (Cable), que es
+ * también dólares y por eso se suma al mismo bolsillo.
+ */
+function parsePosicionBalanz(lineas){
+  const tenencias = [];
+  let grupo = "", totalARS = null, efectivoARS = null, efectivoUSD = null, mep = null, fecha = "";
+
+  for(const l of lineas){
+    const t = l.texto.trim();
+
+    if(!fecha){
+      const f = t.match(/Fecha resumen\s+(\d{2}\/\d{2}\/\d{4})/i);
+      if(f) fecha = ddmmyyyyToIso(f[1]);
+    }
+
+    // "Total $ 11.480.503" — sin decimales en este resumen
+    const tot = t.match(/^Total\s+\$\s*([\d.]+(?:,\d{2})?)\s*$/i);
+    if(tot && totalARS == null) totalARS = parseNum(tot[1]);
+
+    /* El bloque Monedas viene pegado al de Instrumentos en la misma línea
+       ("Acciones $ 1.853.985 Pesos $ -17,06"), así que se busca por etiqueta. */
+    const mp = t.match(/\bPesos\s+\$\s*(-?[\d.]+,\d{2})/i);
+    if(mp && efectivoARS == null) efectivoARS = parseNum(mp[1]);
+    const md = t.match(/\bD[oó]lares\s+USD\s*(-?[\d.]+,\d{2})/i);
+    if(md) efectivoUSD = (efectivoUSD || 0) + parseNum(md[1]);
+    const mc = t.match(/US Dollar \(Cable\)\s+USD\s*(-?[\d.]+,\d{2})/i);
+    if(mc) efectivoUSD = (efectivoUSD || 0) + parseNum(mc[1]);
+    const mm = t.match(/MEP\s*\$\s*([\d.]+,\d{2})/i);
+    if(mm && mep == null) mep = parseNum(mm[1]);
+
+    if(/^(Acciones|Cedears|Corporativos|Fondos|Bonos|Letras|Cauciones)$/i.test(t)){ grupo = t; continue; }
+
+    // TRAN TRANSENER ORDS."B" 1 VOTO ESCRITURALES 337,00 0.00 $ 3.630,00 $ 1.223.310
+    const m = t.match(/^([A-Z0-9]{2,8})\s+(.+?)\s+([\d.]+,\d{2})\s+0\.00\s+\$\s*([\d.]+,\d{2})\s+\$\s*([\d.]+(?:,\d{2})?)\s*$/);
+    if(m) tenencias.push({
+      especie: m[1], descripcion: m[2].trim(), tipoActivo: grupo || "Otros",
+      cantidad: parseNum(m[3]), precio: parseNum(m[4]), valorARS: parseNum(m[5]), moneda: "ARS"
+    });
+  }
+
+  return { broker:"Balanz", fecha, totalARS, totalUSD:null, efectivoARS, efectivoUSD, mep, tc:mep, tenencias };
+}
+
+function parsePosicionBroker(broker, lineas){
+  return broker === "PPI" ? parsePosicionPPI(lineas) : parsePosicionBalanz(lineas);
 }
 
 /* ══════════════════════ COTIZACIÓN ══════════════════════ */
@@ -1855,8 +2024,18 @@ function cardInversionesEnPatrimonio(){
       <span class="num" style="font-weight:600;font-size:14px;text-align:right">${totalVista(b.ars, b.usd)}</span>
     </div>`).join("");
 
-  // Una cuenta de tipo Inversión con saldo, más tenencias cargadas, puede estar contando dos veces lo mismo.
-  const cuentasInv = cuentasActivas().filter(c => c.enPatrimonio && c.tipo === "inversion" && saldosPorCuenta()[c.id] !== 0);
+  /* Una cuenta de tipo Inversión puede estar contando dos veces lo mismo — pero
+     sólo si su saldo *es* la cartera. La cuenta de efectivo de un broker (la
+     plata sin invertir) es complementaria de las tenencias, no las duplica, así
+     que avisamos únicamente cuando el saldo se parece al total de algún broker. */
+  const cuentasInv = cuentasActivas().filter(c => {
+    if(!c.enPatrimonio || c.tipo !== "inversion") return false;
+    const saldo = saldosPorCuenta()[c.id];
+    if(!saldo) return false;
+    const enArs = convertir(saldo, c.moneda, "ARS", rate());
+    if(enArs == null || enArs <= 0) return false;
+    return Object.values(porBroker).some(b => b.ars > 0 && Math.abs(enArs - b.ars) <= b.ars * 0.02);
+  });
 
   return `
   <div class="card">
@@ -1923,7 +2102,8 @@ function cardComposicion(titulo, filasTodas){
 function modalImportar(){
   const est = { datos:null, filas:[], periodo:"", fechaResumen:"", cuentaArs:"", cuentaUsd:"", archivo:"",
                 modo:"tarjeta", detectadas:[], solapa:"", banco:null, tarjetas:[],
-                mapeoAbierto:true, mapeoFalta:-1 };
+                mapeoAbierto:true, mapeoFalta:-1,
+                pos:null, cuentaEfARS:"", cuentaEfUSD:"" };
 
   $("#modalRoot").innerHTML = `<div class="overlay" id="ovImp"><div class="modal wide" id="impBody"></div></div>`;
   const cerrar = () => { document.removeEventListener("keydown", onTecla); $("#modalRoot").innerHTML = ""; };
@@ -1933,7 +2113,7 @@ function modalImportar(){
      internos ya armados. Sólo cierra con la ✕ o con Escape, y si hay filas
      cargadas todavía sin confirmar, pregunta antes. */
   function intentarCerrar(){
-    if(est.filas.length && !confirm("¿Descartar la importación? Se pierde lo que cargaste.")) return;
+    if((est.filas.length || est.pos) && !confirm("¿Descartar la importación? Se pierde lo que cargaste.")) return;
     cerrar();
   }
   function onTecla(e){ if(e.key === "Escape"){ e.preventDefault(); intentarCerrar(); } }
@@ -1943,14 +2123,14 @@ function modalImportar(){
   function vistaArchivo(){
     return `
       <button class="close" id="mClose">×</button>
-      <h3>Importar resumen de tarjeta</h3>
-      <p class="hint">Resumen de Visa, Amex o Mastercard en <b>.pdf</b> o <b>.xlsx</b>. El archivo se lee en tu navegador: no se sube a ningún lado.</p>
+      <h3>Importar resumen</h3>
+      <p class="hint">Resumen de tarjeta (Visa, Amex, Mastercard) en <b>.pdf</b> o <b>.xlsx</b>, resumen de cuenta del banco, o posición de broker (<b>PPI</b>, <b>Balanz</b>) en <b>.pdf</b>. El archivo se lee en tu navegador: no se sube a ningún lado.</p>
       <div class="drop" id="dropZone">
         <span class="big">⬆</span>
         Arrastrá el archivo acá o tocá para elegirlo
       </div>
       <input type="file" id="fileInput" accept=".pdf,.xlsx,.xls" class="hidden">
-      <p class="hint" style="margin-top:14px">Los resúmenes de caja de ahorro y las tenencias de broker todavía no: por ahora sólo tarjetas.</p>`;
+      <p class="hint" style="margin-top:14px">El tipo de archivo se detecta solo. Si el PDF tiene contraseña (el de PPI la tiene), se te va a pedir.</p>`;
   }
 
   function bindArchivo(){
@@ -1975,7 +2155,23 @@ function modalImportar(){
       if(esPdf){
         if(typeof pdfjsLib === "undefined"){ toast("El lector de PDF todavía está cargando, probá en un segundo"); return; }
         pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-        const conItems = await pdfLineasItems(file);
+        const conItems = await pdfLineasConClave(file);
+
+        // Posición de broker: efectivo + tenencias, sin movimientos
+        const broker = detectarBroker(conItems);
+        if(broker){
+          const pos = parsePosicionBroker(broker, conItems);
+          if(!pos.tenencias.length && pos.efectivoARS == null && pos.efectivoUSD == null){
+            toast(`Reconocí el resumen de ${broker} pero no encontré tenencias ni saldos`); return;
+          }
+          est.modo = "broker";
+          est.archivo = file.name;
+          est.pos = pos;
+          est.datos = { emisor:broker, numero:"", lineas:[], meta:{} };
+          autoMapearBroker();
+          pintar();
+          return;
+        }
 
         // Resumen de cuenta: varias cuentas y las tarjetas embebidas
         if(esResumenDeCuenta(conItems)){
@@ -2674,7 +2870,257 @@ function modalImportar(){
       </div>`;
   }
 
+  /* ══════════ Posición de broker: efectivo + tenencias ══════════
+     Los dos bolsillos se importan juntos y son complementarios: el efectivo va
+     al saldo de una cuenta y las tenencias a Inversiones. No se generan
+     movimientos — la posición es una foto, no un historial de boletos. */
+
+  /** Cuenta de efectivo del broker en esa moneda: «Balanz ARS», «PPI USD», … */
+  function autoMapearBroker(){
+    const brk = est.pos.broker.toLowerCase();
+    const buscar = mon => {
+      const cand = cuentasActivas().filter(c => c.moneda === mon && c.tipo !== "tarjeta");
+      const porNombre = cand.filter(c => c.nombre.toLowerCase().includes(brk));
+      // Entre varias del mismo broker gana la que nombra la moneda
+      const marca = mon === "USD" ? /usd|d[oó]lar|u\$s/i : /ars|pesos?/i;
+      return ((porNombre.find(c => marca.test(c.nombre)) || porNombre[0]) || {}).id || "";
+    };
+    if(est.pos.efectivoARS != null) est.cuentaEfARS = buscar("ARS");
+    if(est.pos.efectivoUSD != null) est.cuentaEfUSD = buscar("USD");
+  }
+
+  /** Tipo de cambio para conciliar: el que informa el resumen; si no, el de la app. */
+  const tcBroker = () => (+est.pos.tc > 0 ? est.pos.tc : rate());
+
+  const sumaTenencias = () => est.pos.tenencias.reduce((a, t) => a + (+t.valorARS || 0), 0);
+
+  /** efectivo + tenencias vs el total de cartera que declara el resumen. */
+  function conciliacionBroker(){
+    const pos = est.pos, tc = tcBroker();
+    if(pos.totalARS == null) return null;
+    const efUsdArs = pos.efectivoUSD ? (tc ? pos.efectivoUSD * tc : null) : 0;
+    if(efUsdArs == null) return { falta:true };
+    const calculado = (+pos.efectivoARS || 0) + efUsdArs + sumaTenencias();
+    const dif = calculado - pos.totalARS;
+    // Tolerancia chica: los resúmenes redondean al peso
+    return { calculado, total:pos.totalARS, dif, tc,
+             coincide: Math.abs(dif) <= Math.max(1, Math.abs(pos.totalARS) * 0.00001) };
+  }
+
+  /** Opciones de cuenta para el efectivo de una moneda. */
+  function optEfectivo(mon, sel){
+    const cand = cuentasActivas().filter(c => c.moneda === mon && c.tipo !== "tarjeta");
+    return `<option value="">— elegir cuenta ${mon} —</option>` + cand.map(c =>
+      `<option value="${esc(c.id)}" ${sel === c.id ? "selected" : ""}>${esc(c.nombre)} · ${esc(tipoInfo(c.tipo).l)}</option>`).join("");
+  }
+
+  /** Una línea del mapeo de efectivo, con su saldo y el botón de crear. */
+  function filaEfectivo(mon, monto, sel){
+    if(monto == null) return "";
+    return `
+    <div class="efLinea ${sel ? "" : "falta"}">
+      <span class="lbl">Efectivo ${mon === "USD" ? "en dólares" : "en pesos"}</span>
+      <span class="num mto">${fmt(monto, mon)}</span>
+      <select data-efect="${mon}">${optEfectivo(mon, sel)}</select>
+      ${sel ? "" : `<button class="btn ghost xs" data-crearef="${mon}">Crear «${esc(est.pos.broker)} ${mon}»</button>`}
+    </div>`;
+  }
+
+  function vistaBroker(){
+    const pos = est.pos, conc = conciliacionBroker();
+    const total = sumaTenencias();
+
+    const filas = pos.tenencias.map(t => {
+      const derivado = t.cantidad * t.precio;
+      const difiere = Math.abs(derivado - t.valorARS) > Math.max(1, t.valorARS * 0.001);
+      return `
+      <tr>
+        <td><b>${esc(t.especie)}</b></td>
+        <td class="flex">${esc(t.descripcion)}</td>
+        <td><span class="tag">${esc(t.tipoActivo)}</span></td>
+        <td class="num">${nf(t.cantidad, 2)}</td>
+        <td class="num">${fmt(t.precio, "ARS")}</td>
+        <td class="num" style="font-weight:600">${fmt(t.valorARS, "ARS")}</td>
+        <td>${difiere ? `<span class="tag off" title="El resumen dice ${esc(fmt(t.valorARS, "ARS"))} pero cantidad × precio da ${esc(fmt(derivado, "ARS"))}: se guarda el derivado">redondeo</span>` : ""}</td>
+      </tr>`;
+    }).join("");
+
+    const faltaMapear = (pos.efectivoARS != null && !est.cuentaEfARS) ||
+                        (pos.efectivoUSD != null && !est.cuentaEfUSD);
+
+    const yaHay = state.inversiones.filter(i => brokerDe(i) === pos.broker).length;
+
+    return `
+      <div class="impHead scroll">
+      <button class="close" id="mClose">×</button>
+      <h3>Posición de ${esc(pos.broker)}</h3>
+      <p class="impLinea"><span>${esc(est.archivo)}${pos.fecha ? ` · al ${dispDate(pos.fecha)}` : ""} · ${pos.tenencias.length} ${pos.tenencias.length === 1 ? "tenencia" : "tenencias"}</span>
+        ${pos.totalARS != null ? `<span>Total de cartera <b>${fmt(pos.totalARS, "ARS")}</b>${pos.totalUSD != null ? ` · ${fmt(pos.totalUSD, "USD")}` : ""}</span>` : ""}
+        ${pos.tc ? `<span>TC del resumen <b>$${nf(pos.tc, 2)}</b>${pos.mep ? " (MEP)" : ""}</span>` : ""}</p>
+
+      <div class="efBox">
+        <div class="cab">Efectivo del broker — a qué cuenta de la app va</div>
+        ${filaEfectivo("ARS", pos.efectivoARS, est.cuentaEfARS)}
+        ${filaEfectivo("USD", pos.efectivoUSD, est.cuentaEfUSD)}
+        <p class="hint" style="margin:6px 0 0">Es la plata sin invertir. Se <b>fija</b> como saldo de esa cuenta a la fecha del resumen (no se suma), y convive con las tenencias sin contarse dos veces.</p>
+      </div>
+
+      ${conc ? `<p class="impLinea" style="margin:8px 0 6px">${conc.falta
+        ? `<span class="mal">Sin cotización no puedo conciliar el efectivo en dólares.</span>`
+        : `<span class="${conc.coincide ? "ok" : "mal"}">${conc.coincide ? "✓" : "✗"}</span> Efectivo + tenencias = <b>${fmt(conc.calculado, "ARS")}</b> vs total del resumen <b>${fmt(conc.total, "ARS")}</b>${
+            conc.coincide ? "" : ` · diferencia ${fmt(conc.dif, "ARS")}`}</span>`}</p>` : ""}
+      </div>
+
+      <div class="impTabla">
+      <div class="tblwrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>Especie</th><th class="flex">Descripción</th><th>Tipo</th>
+            <th style="text-align:right">Cantidad</th><th style="text-align:right">Precio</th>
+            <th style="text-align:right">Valor</th><th></th>
+          </tr></thead>
+          <tbody>${filas || `<tr><td colspan="7" style="color:var(--muted);padding:14px">El resumen no trae tenencias: sólo se va a actualizar el efectivo.</td></tr>`}</tbody>
+          ${pos.tenencias.length ? `<tfoot><tr>
+            <td colspan="5" style="text-align:right;font-weight:600">Total tenencias</td>
+            <td class="num" style="font-weight:700">${fmt(total, "ARS")}</td><td></td>
+          </tr></tfoot>` : ""}
+        </table>
+      </div>
+      </div>
+
+      <div class="impPie">
+        <p class="hint" style="margin:0" id="impPie">${pos.tenencias.length} ${pos.tenencias.length === 1 ? "tenencia" : "tenencias"} de ${esc(pos.broker)}${
+          yaHay ? ` · reemplazan las ${yaHay} que ya tenías de este broker` : ""}. No se crean movimientos.</p>
+        ${faltaMapear ? `<p class="hint" style="color:var(--danger);margin:4px 0 0">Asigná la cuenta de efectivo antes de importar.</p>` : ""}
+        <div class="btn-row">
+          <button class="btn primary block" id="btnImportar" ${faltaMapear ? "disabled" : ""}>Actualizar posición de ${esc(pos.broker)}</button>
+        </div>
+      </div>`;
+  }
+
+  function bindBroker(){
+    $$("[data-efect]").forEach(sel => sel.onchange = () => {
+      if(sel.dataset.efect === "USD") est.cuentaEfUSD = sel.value; else est.cuentaEfARS = sel.value;
+      pintar();
+    });
+    $$("[data-crearef]").forEach(b => b.onclick = ev => crearCuentaEfectivo(b.dataset.crearef, ev.currentTarget));
+    $("#btnImportar").onclick = ev => confirmarBroker(ev.currentTarget);
+  }
+
+  /** Crea la cuenta de efectivo del broker («Balanz ARS», «PPI USD»). */
+  async function crearCuentaEfectivo(mon, btn){
+    const cuenta = {
+      id: uid(),
+      nombre: `${est.pos.broker} ${mon}`,
+      tipo: "inversion",
+      moneda: mon,
+      saldoInicial: 0,
+      fechaInicial: est.pos.fecha || todayIso(),
+      enPatrimonio: true,
+      orden: 0, activo: true
+    };
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = "Creando…";
+    try{
+      await api({action:"saveCuenta", cuenta});
+      state.cuentas.push(cuenta);
+      state.cuentas = ordenarCuentas(state.cuentas);
+      if(mon === "USD") est.cuentaEfUSD = cuenta.id; else est.cuentaEfARS = cuenta.id;
+      pintar();
+      toast(`Cuenta "${cuenta.nombre}" creada`);
+    }catch(e){
+      toast(e.message);
+      btn.disabled = false; btn.textContent = prev;
+    }
+  }
+
+  /**
+   * El efectivo del resumen es un saldo-snapshot: la cuenta tiene que *mostrar*
+   * ese número, no sumarlo. Como `saldosPorCuenta` hace saldoInicial + todos los
+   * movimientos, el saldo inicial que se guarda es el del resumen menos lo ya
+   * registrado hasta esa fecha; los movimientos posteriores siguen acumulando
+   * encima, que es lo que corresponde.
+   */
+  function saldoInicialPara(cuentaId, efectivo, fecha){
+    const tope = fecha || todayIso();
+    let movs = 0;
+    for(const m of state.movimientos){
+      if(m.fecha > tope) continue;
+      if(m.tipo === "Ingreso" && m.cuenta === cuentaId) movs += +m.monto || 0;
+      else if(m.tipo === "Egreso" && m.cuenta === cuentaId) movs -= +m.monto || 0;
+      else if(m.tipo === "Interno"){
+        if(m.cuenta === cuentaId) movs -= +m.monto || 0;
+        if(m.cuentaDestino === cuentaId) movs += (m.montoDestino == null ? +m.monto : +m.montoDestino) || 0;
+      }
+    }
+    return Math.round((efectivo - movs) * 100) / 100;
+  }
+
+  async function confirmarBroker(btn){
+    const pos = est.pos;
+    btn.disabled = true; btn.textContent = "Guardando…";
+    try{
+      /* Tenencias: es una foto, reemplaza la anterior de ESTE broker y deja los
+         demás intactos. Se reusa el id de la tenencia que ya existía para la
+         misma especie, así el histórico de esa posición no se corta. */
+      const previas = state.inversiones.filter(i => brokerDe(i) === pos.broker);
+      const porEspecie = {};
+      previas.forEach(i => { porEspecie[String(i.especie || "").toUpperCase()] = i; });
+
+      const inversiones = pos.tenencias.map(t => {
+        const anterior = porEspecie[t.especie.toUpperCase()];
+        return {
+          id: anterior ? anterior.id : uid(),
+          broker: pos.broker,
+          especie: t.especie,
+          descripcion: t.descripcion,
+          tipoActivo: t.tipoActivo,
+          cantidad: t.cantidad,
+          precioActual: t.precio,
+          moneda: t.moneda || "ARS",
+          // El backend recalcula ValorActual = cantidad × precio: guardamos lo
+          // mismo acá para que la pantalla no cambie al recargar.
+          valorActual: t.cantidad * t.precio,
+          fecha: pos.fecha || todayIso()
+        };
+      });
+
+      const vivas = new Set(inversiones.map(i => i.id));
+      const aBorrar = previas.filter(i => !vivas.has(i.id));
+
+      if(inversiones.length) await api({action:"saveInversiones", inversiones});
+      for(const i of aBorrar) await api({action:"deleteInversion", id:i.id});
+
+      state.inversiones = state.inversiones.filter(i => brokerDe(i) !== pos.broker).concat(inversiones);
+
+      // Efectivo: se fija el saldo de la cuenta al que declara el resumen
+      const cuentasTocadas = [];
+      for(const [mon, id, efectivo] of [["ARS", est.cuentaEfARS, pos.efectivoARS],
+                                        ["USD", est.cuentaEfUSD, pos.efectivoUSD]]){
+        if(efectivo == null || !id) continue;
+        const c = cuentaPorId(id);
+        if(!c) continue;
+        const cuenta = { ...c,
+          saldoInicial: saldoInicialPara(id, efectivo, pos.fecha),
+          fechaInicial: pos.fecha || c.fechaInicial || todayIso() };
+        await api({action:"saveCuenta", cuenta});
+        Object.assign(c, cuenta);
+        cuentasTocadas.push(`${c.nombre} ${fmt(efectivo, mon)}`);
+      }
+
+      cerrar();
+      render();
+      toast(`${pos.broker}: ${inversiones.length} ${inversiones.length === 1 ? "tenencia" : "tenencias"}` +
+        (aBorrar.length ? ` · ${aBorrar.length} ${aBorrar.length === 1 ? "dada de baja" : "dadas de baja"}` : "") +
+        (cuentasTocadas.length ? ` · efectivo: ${cuentasTocadas.join(" · ")}` : ""));
+    }catch(e){
+      toast(e.message);
+      btn.disabled = false; btn.textContent = `Actualizar posición de ${pos.broker}`;
+    }
+  }
+
   function vistaPreview(){
+    if(est.modo === "broker") return vistaBroker();
     if(est.modo === "cuenta") return vistaCuenta();
     const { meta } = est.datos;
     const hayUsd = est.filas.some(f => f.moneda === "USD");
@@ -2810,6 +3256,8 @@ function modalImportar(){
 
   function bindPreview(){
     $("#mClose").onclick = intentarCerrar;
+
+    if(est.modo === "broker"){ bindBroker(); return; }
 
     if(est.modo === "cuenta"){
       $$("[data-mapa]").forEach(sel => sel.onchange = () => {
