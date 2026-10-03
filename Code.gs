@@ -7,9 +7,16 @@
    2. Extensiones → Apps Script. Borrá todo y pegá este código.
    3. Guardá (Ctrl+S).
    4. Implementar → Nueva implementación → Tipo: Aplicación web.
-   5. Ejecutar como: Yo.  Quién tiene acceso: Solo yo (o Cualquiera con enlace).
+   5. Ejecutar como: Yo.  Quién tiene acceso: Cualquiera con el enlace.
    6. Implementar → autorizá → copiá la URL /exec.
-   7. Pegá esa URL en la app (pestaña Config).
+   7. Pegá esa URL en la constante BACKEND_URL de index.html.
+   8. Abrí la app y definí tu clave: desde ese momento nadie entra sin ella,
+      aunque conozca la URL. Hacelo apenas despliegues.
+      La clave queda guardada (hasheada) en las Propiedades del script, no en
+      la planilla. Si la olvidás, ejecutá resetearClave() desde este editor.
+
+   Si cambiás este archivo, acordate de Implementar → Administrar implementaciones
+   → editar → Versión nueva, o la app sigue usando el código viejo.
 ═══════════════════════════════════════════════════════════════ */
 
 const MOV_SHEET    = "Movimientos";
@@ -43,11 +50,92 @@ function doGet(e) {
     try { return jsonResponse(handleAction(e.parameter)); }
     catch (err) { return jsonResponse({ ok:false, error: err.message }); }
   }
-  return jsonResponse({ ok:true, msg:"Mis Finanzas API activa" });
+  return jsonResponse({ ok:true, msg:"Mis Finanzas API activa", protegida: !!getClaveHash() });
+}
+
+/* ───────── Seguridad ─────────
+   La app manda en cada pedido el SHA-256 de tu clave (el texto plano nunca viaja
+   ni se guarda). Acá se compara contra el hash guardado.
+
+   El hash y el contador de intentos viven en las PROPIEDADES DEL SCRIPT
+   (Apps Script → ⚙ Configuración del proyecto → Propiedades del script), no en
+   la planilla: así no se ven desde la hoja, no se borran por accidente y no
+   salen en ninguna copia o exportación del archivo de Google Sheets.
+
+   Si todavía no hay clave configurada, el backend acepta todo: definila apenas
+   despliegues. Si la olvidás, ejecutá a mano la función resetearClave() desde
+   el editor de Apps Script y definí una nueva desde la app.
+
+   Cada intento fallido tarda más que el anterior, pero la clave correcta entra
+   siempre: como la URL es pública, un bloqueo total permitiría que un tercero
+   te deje afuera a propósito. */
+const ACCIONES_PUBLICAS = { estado: true, setClave: true };
+const PROP_CLAVE     = "claveHash";
+const PROP_INTENTOS  = "intentosFallidos";
+const DEMORA_BASE_MS = 400;
+const DEMORA_MAX_MS  = 5000;
+
+function props() { return PropertiesService.getScriptProperties(); }
+
+function getClaveHash() {
+  const p = props();
+  let h = String(p.getProperty(PROP_CLAVE) || "");
+  if (!h) {
+    // Migración desde la versión que lo guardaba en la hoja Config
+    const viejo = String(getConfig()["claveHash"] || "");
+    if (viejo) {
+      p.setProperty(PROP_CLAVE, viejo);
+      CONFIG_INTERNAS.forEach(borrarConfig);
+      h = viejo;
+    }
+  }
+  return h;
+}
+
+function verificarClave(data) {
+  const stored = getClaveHash();
+  if (!stored) return { ok: true };                        // todavía sin clave: modo abierto
+  const p = props();
+  if (String(data.clave || "") === stored) {               // la clave correcta entra siempre
+    if (Number(p.getProperty(PROP_INTENTOS) || 0)) p.setProperty(PROP_INTENTOS, "0");
+    return { ok: true };
+  }
+  const n = Number(p.getProperty(PROP_INTENTOS) || 0) + 1;
+  p.setProperty(PROP_INTENTOS, String(n));
+  const demora = Math.min(DEMORA_MAX_MS, DEMORA_BASE_MS * n);
+  Utilities.sleep(demora);                                 // cada intento fallido tarda más
+  return { ok:false, error:"CLAVE_INVALIDA", fallidos:n, demoraSeg: Math.round(demora/100)/10 };
+}
+
+function setClave(data) {
+  const stored = getClaveHash();
+  if (stored) {                                            // cambiar: hay que saber la actual
+    const chk = verificarClave(data);
+    if (!chk.ok) return chk;
+  }
+  const nueva = String(data.nuevaHash || "");
+  if (!/^[0-9a-f]{64}$/.test(nueva)) return { ok:false, error:"Hash de clave inválido" };
+  props().setProperties({ claveHash: nueva, intentosFallidos: "0" });
+  return { ok:true };
+}
+
+/* Ejecutala a mano desde el editor de Apps Script si olvidaste la clave. */
+function resetearClave() {
+  props().deleteProperty(PROP_CLAVE);
+  props().deleteProperty(PROP_INTENTOS);
+  return "Clave borrada. Abrí la app y definí una nueva.";
 }
 
 function handleAction(data) {
+  if (!ACCIONES_PUBLICAS[data.action]) {
+    const chk = verificarClave(data);
+    if (!chk.ok) return chk;
+  }
   switch (data.action) {
+
+    /* ── Seguridad ── */
+    case "estado":   return { ok:true, tieneClave: !!getClaveHash() };
+    case "setClave": return setClave(data);
 
     case "all": return handleAll();
 
@@ -81,7 +169,7 @@ function handleAction(data) {
     case "replaceInversionesBroker": return replaceInvBroker(data.broker, data.inversiones || []);
 
     /* ── Config ── */
-    case "getConfig": return { ok:true, config: getConfig() };
+    case "getConfig": return { ok:true, config: getConfigPublico() };
     case "setConfig": return setConfig(data.clave, data.valor);
 
     default: return { ok:false, error:"Accion desconocida: " + data.action };
@@ -96,8 +184,23 @@ function handleAll() {
     reglas:      listGeneric(REGLAS_SHEET, REGLAS_COLS),
     cuentas:     listGeneric(CUENTAS_SHEET, CUENTAS_COLS),
     inversiones: listGeneric(INV_SHEET, INV_COLS),
-    config:      getConfig()
+    config:      getConfigPublico()
   };
+}
+// La config que ve el navegador. Lo sensible ya no vive en la planilla, pero
+// filtramos igual por si quedó algo de una versión anterior.
+const CONFIG_INTERNAS = ["claveHash","intentosFallidos","bloqueadoHasta"];
+function getConfigPublico() {
+  const o = getConfig();
+  CONFIG_INTERNAS.forEach(function(k){ delete o[k]; });
+  return o;
+}
+function borrarConfig(clave) {
+  const sh = getOrCreateSheet(CONFIG_SHEET, CONFIG_COLS);
+  const all = sh.getDataRange().getValues();
+  for (let i = all.length - 1; i >= 1; i--) {
+    if (String(all[i][0]) === String(clave)) sh.deleteRow(i + 1);
+  }
 }
 
 /* ───────── Movimientos ───────── */

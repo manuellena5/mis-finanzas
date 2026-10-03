@@ -23,6 +23,8 @@ Webapp personal (solo para vos) para cargar resúmenes de cuenta, categorizar mo
 
 > **Balanz**: exportá el reporte **"Posición consolidada / Tenencia"**, no el extracto de cuenta corriente (ese no tiene valuación).
 
+Al importar, el saldo de la cuenta se actualiza con el que trae el archivo — **salvo que el que ya tenías cargado sea más nuevo**. Así podés importar resúmenes viejos para completar los movimientos sin que te arruinen el patrimonio de hoy. Cuando pasa, la app te avisa de qué cuentas conservó el saldo. La fecha del archivo se toma del cierre del resumen, o del último movimiento que contiene.
+
 ## Setup del backend (Google Apps Script) — una sola vez
 
 1. Entrá a [sheets.google.com](https://sheets.google.com) y creá una **planilla nueva** (será la base de datos). Podés llamarla "Mis Finanzas DB".
@@ -30,20 +32,45 @@ Webapp personal (solo para vos) para cargar resúmenes de cuenta, categorizar mo
 3. Borrá todo el código de ejemplo y pegá el contenido de **`Code.gs`**. Guardá (Ctrl+S).
 4. Arriba a la derecha: **Implementar → Nueva implementación**.
 5. Engranaje ⚙ → tipo **Aplicación web**.
-6. Configurá: *Ejecutar como* = **Yo**; *Quién tiene acceso* = **Solo yo** (o "Cualquiera con el enlace" si querés abrirla desde el celu sin loguearte con la misma cuenta).
+6. Configurá: *Ejecutar como* = **Yo**; *Quién tiene acceso* = **Cualquiera con el enlace** (así entrás desde el celular sin loguearte con la misma cuenta de Google; lo que protege tus datos es la clave, no el enlace).
 7. **Implementar** → autorizá los permisos → copiá la **URL** que termina en `/exec`.
-8. Abrí la app, andá a **Config**, pegá esa URL y tocá **Guardar y conectar**.
+8. Pegá esa URL en la constante `BACKEND_URL`, arriba de todo del `<script>` de `index.html`:
+   ```js
+   const BACKEND_URL = "https://script.google.com/macros/s/…/exec";
+   ```
+9. Subí el `index.html`, abrilo y **definí tu clave**. Hacelo apenas despliegues: hasta que exista una clave, el backend acepta cualquier pedido. Queda guardada (hasheada) en las Propiedades del script, no en la planilla.
 
 Las pestañas (Movimientos, Reglas, Cuentas, Inversiones, Config) se crean solas en la planilla la primera vez.
+
+> Si preferís no tocar el archivo, dejá `BACKEND_URL` vacía y pegá la URL en **Config**, como antes. La diferencia es que en cada dispositivo nuevo vas a tener que pegar la URL además de escribir la clave.
+
+**Cada vez que cambies `Code.gs`** hay que volver a implementar: **Implementar → Administrar implementaciones → ✏️ editar → Versión: Nueva → Implementar**. Si creás una implementación nueva en lugar de editar la existente, la URL cambia y hay que actualizar `BACKEND_URL`.
 
 ## Publicar en GitHub Pages
 
 1. Creá un repo (privado o público) y subí `index.html` a la raíz.
 2. En el repo: **Settings → Pages → Source: Deploy from a branch → main / root**.
 3. Abrí la URL `https://<usuario>.github.io/<repo>/`.
-4. En Config pegá la URL del backend. Listo — la URL y tus preferencias quedan guardadas en el navegador.
+4. Escribí tu clave una vez y listo: queda guardada en ese navegador junto con tus preferencias.
 
-> Como los datos viven en tu Google Sheet (no en el repo), podés tener el repo público sin exponer tu información. Si querés doble candado, hacé el repo privado.
+> Los datos viven en tu Google Sheet, no en el repo, así que el repo puede ser público. La URL del backend queda a la vista en el `index.html`, pero sin la clave no sirve para nada: el backend rechaza todo pedido que no la traiga.
+
+## Seguridad
+
+La app se abre con una **clave**, que escribís una sola vez por dispositivo.
+
+- La clave **nunca viaja ni se guarda en texto plano**. El navegador calcula su SHA-256 (con un salt fijo) y lo que se manda y se guarda es ese hash.
+- La validación es **del lado del backend**: el Apps Script compara el hash contra el que tiene guardado y rechaza cualquier acción que no coincida. Por eso tener el `index.html` o la URL `/exec` no alcanza para ver nada.
+- El hash **no vive en la planilla** sino en las **Propiedades del script** (Apps Script → ⚙ Configuración del proyecto → Propiedades del script). No se ve desde la hoja, no se borra por accidente y no sale en copias ni exportaciones del archivo de Sheets.
+- Cada intento fallido **tarda más que el anterior** (hasta 5 segundos), pero **la clave correcta entra siempre**. No hay bloqueo total a propósito: como la URL es pública, cualquiera podría fallar la clave a propósito y dejarte afuera a vos.
+- En **Config → Seguridad** podés cambiar la clave (te pide la actual) o cerrar sesión en ese dispositivo. Al cambiarla, los otros dispositivos van a pedirte la nueva la próxima vez que abran.
+- **Si la olvidás**: abrí el editor de Apps Script, elegí la función `resetearClave` y tocá **Ejecutar**. La próxima vez que abras la app te va a dejar definir una nueva.
+
+### Por qué la URL sí va en el archivo
+
+La URL `/exec` no puede guardarse en una propiedad del script: el navegador necesita conocerla para hacer el primer pedido, y sin la URL no hay a quién preguntarle. Es un problema del huevo y la gallina. Con la clave validándose en el backend, igual dejó de ser un secreto: es una dirección, no una credencial. Lo que sí es secreto —el hash de la clave— está del lado del servidor.
+
+Lo que esto *no* es: la clave protege el acceso a tus datos, pero no los cifra dentro de la planilla. Quien tenga acceso a tu cuenta de Google sigue viendo todo, como siempre.
 
 ## Uso diario
 
