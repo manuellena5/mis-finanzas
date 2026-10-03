@@ -1,5 +1,12 @@
 # Changelog
 
+## 11.2 — Doble atrás para salir y Ajustes colapsable (2026-10-03) ✅
+
+- **El botón atrás ya no cierra la app de un toque.** El primero avisa ("Tocá atrás otra vez para salir") y el segundo, dentro de 2 segundos, sale. Si hay un modal abierto, atrás lo cierra y no cuenta como intento de salida. Instalada como PWA el segundo toque cierra la app; en una pestaña común te lleva a la página anterior, que es lo normal del navegador.
+- **Ajustes es ahora una lista de tarjetas que se abren y cierran.** Tocás el encabezado y se despliega; lo que abrís queda recordado para la próxima. De fábrica están todas cerradas, salvo **Conexión** mientras falte conectar. Los botones del encabezado (＋ Nueva, etc.) siguen funcionando sin colapsar la tarjeta.
+
+`Code.gs` cambia sólo en `VERSION`, pero hay que **re-deployar el Apps Script** para que el chip del header no quede en rojo.
+
 ## 11.1 — Entrar con una clave en lugar de un token (2026-10-03) ✅
 
 Se reemplaza el token compartido por una **clave tuya**, que escribís una sola vez por dispositivo y queda guardada.

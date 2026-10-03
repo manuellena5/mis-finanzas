@@ -72,6 +72,17 @@ h2.tab-title{font-size:19px;margin:2px 0 14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
 .card + .card{margin-top:12px}
 .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:4px}
+
+/* Tarjetas colapsables (Ajustes): el encabezado es el disparador. */
+.card.colap > .card-head{cursor:pointer;-webkit-user-select:none;user-select:none;align-items:center}
+.card.colap > .card-head::after{content:"⌄";font-size:17px;line-height:1;color:var(--faint);flex-shrink:0;transition:transform .15s;transform:translateY(-2px)}
+.card.colap.abierta > .card-head::after{transform:rotate(180deg) translateY(-2px)}
+.card.colap:not(.abierta){padding-top:12px;padding-bottom:12px}
+.card.colap:not(.abierta) > .card-head{margin-bottom:0}
+/* Cerrada: sólo título, chip de estado y flecha. */
+.card.colap:not(.abierta) > *:not(.card-head){display:none}
+.card.colap:not(.abierta) > .card-head .hint,
+.card.colap:not(.abierta) > .card-head button{display:none}
 .card h3{margin:0;font-size:15px}
 .card .hint{font-size:12px;color:var(--faint);margin:4px 0 12px;line-height:1.5}
 .tag{font-size:11px;padding:2px 8px;border-radius:5px;background:#f1f5f9;color:var(--muted);font-weight:500;white-space:nowrap;display:inline-block}
@@ -368,7 +379,7 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
    tres lados — acá, en sw.js (nombre del cache) y en Code.gs (const VERSION).
    La app compara la suya con la que publica el backend, así se ve de un vistazo
    si falta pushear el front o re-deployar el Apps Script. */
-const APP_VERSION = "11.1";
+const APP_VERSION = "11.2";
 const APP_FECHA   = "2026-10-03";
 
 /* URL /exec del Apps Script. Si la dejás acá, lo único que escribís en cada
@@ -4241,17 +4252,40 @@ function modalMovimiento(id){
   };
 }
 
-/* ── Ajustes ── */
+/* ── Ajustes ──
+   Cada tarjeta se abre y se cierra tocando su encabezado. Lo que abrís queda
+   recordado; de fábrica están todas cerradas, salvo Conexión mientras falte
+   conectar, que es lo único que no podés dejar pasar. */
+function ajustesAbiertas(){
+  try{ return JSON.parse(localStorage.getItem("mf_ajustes") || "{}"); }catch(e){ return {}; }
+}
+function ajusteAbierto(id){
+  const g = ajustesAbiertas();
+  if(id in g) return !!g[id];
+  return id === "conexion" && !state.conectado;
+}
+function toggleAjuste(id){
+  const g = ajustesAbiertas();
+  g[id] = !ajusteAbierto(id);
+  localStorage.setItem("mf_ajustes", JSON.stringify(g));
+}
+/* Convierte una tarjeta común en colapsable sin tocar su contenido. */
+function colapsable(id, html){
+  return html
+    .replace('<div class="card">', `<div class="card colap${ajusteAbierto(id) ? " abierta" : ""}" data-card="${id}">`)
+    .replace('<div class="card-head">', `<div class="card-head" data-toggle="${id}" role="button" tabindex="0" aria-expanded="${ajusteAbierto(id)}">`);
+}
+
 function viewAjustes(){
   return `
     <h2 class="tab-title">Ajustes</h2>
-    ${cardConexion()}
-    ${cardCotizacion()}
-    ${cardCuentas()}
-    ${cardCategorias()}
-    ${cardModosPago()}
-    ${cardReglas()}
-    ${cardVersion()}`;
+    ${colapsable("conexion",   cardConexion())}
+    ${colapsable("cotizacion", cardCotizacion())}
+    ${colapsable("cuentas",    cardCuentas())}
+    ${colapsable("categorias", cardCategorias())}
+    ${colapsable("modospago",  cardModosPago())}
+    ${colapsable("reglas",     cardReglas())}
+    ${colapsable("version",    cardVersion())}`;
 }
 
 function cardConexion(){
@@ -4884,6 +4918,18 @@ async function cargarReglasSugeridas(btn){
 }
 
 function bindAjustes(){
+  // Abrir/cerrar tarjetas. Los controles del encabezado (botones, links) siguen
+  // siendo suyos: no cuentan como toque en el encabezado.
+  document.querySelectorAll("[data-toggle]").forEach(head => {
+    const activar = (ev) => {
+      if(ev.target.closest("button, a, input, select, label")) return;
+      toggleAjuste(head.dataset.toggle);
+      render();
+    };
+    head.onclick = activar;
+    head.onkeydown = (ev) => { if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); activar(ev); } };
+  });
+
   const url = $("#cfgUrl");          // no existe si la URL viene fija del archivo
   const cla = $("#cfgClave");
 
@@ -5120,6 +5166,41 @@ async function borrarCuenta(id){
   }catch(e){ toast(e.message); }
 }
 
+/* ══════════════════════ BOTÓN ATRÁS ══════════════════════
+   Para que un toque distraído no cierre la app a mitad de una carga, el primero
+   avisa y el segundo (dentro de 2 segundos) deja pasar el gesto. Si hay un modal
+   abierto, atrás lo cierra y no cuenta como intento de salida.
+   Funciona dejando una entrada de historial de colchón y reponiéndola en cada
+   vuelta. Instalada como PWA, el segundo toque cierra la app; en una pestaña
+   común te lleva a la página donde estabas antes, que es lo normal.          */
+const SALIR_MS = 2000;
+let ultimoAtras = 0;
+
+function hayModalAbierto(){
+  const root = $("#modalRoot");
+  return !!(root && root.innerHTML.trim());
+}
+function colchonHistorial(){ history.pushState({mf:true}, ""); }
+
+function initAtras(){
+  colchonHistorial();
+  window.addEventListener("popstate", () => {
+    if(hayModalAbierto()){            // atrás cierra el modal, no sale de la app
+      $("#modalRoot").innerHTML = "";
+      colchonHistorial();
+      return;
+    }
+    if(Date.now() - ultimoAtras > SALIR_MS){
+      ultimoAtras = Date.now();
+      toast("Tocá atrás otra vez para salir");
+      colchonHistorial();
+      return;
+    }
+    ultimoAtras = 0;                  // segundo toque: soltamos el gesto
+    history.back();
+  });
+}
+
 /* ══════════════════════ INIT ══════════════════════ */
 $$("#curToggle button").forEach(b => b.onclick = () => {
   state.cur = b.dataset.cur;
@@ -5133,6 +5214,7 @@ $("#mepChip").onclick = () => fetchMep(false);
 (async function init(){
   renderMep();
   render();
+  initAtras();
   // La cotización manual manda: no la pisamos con la online.
   if(!(state.mep && state.mep.manual)) fetchMep(true);
   if(!state.url) return;
