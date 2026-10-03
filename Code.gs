@@ -7,12 +7,13 @@
    1. Creá una planilla nueva en Google Sheets (será la base de datos).
    2. Extensiones → Apps Script. Borrá todo y pegá este código.
    3. Guardá (Ctrl+S).
-   4. Ejecutá una vez la función `generarToken` (selector de funciones → Ejecutar).
-      Autorizá los permisos y copiá el token que aparece en el registro.
-   5. Implementar → Nueva implementación → Tipo: Aplicación web.
-   6. Ejecutar como: Yo.  Quién tiene acceso: Cualquiera con el enlace.
-   7. Implementar → copiá la URL /exec.
-   8. Pegá la URL y el token en la app, pestaña Ajustes → Conexión.
+   4. Implementar → Nueva implementación → Tipo: Aplicación web.
+   5. Ejecutar como: Yo.  Quién tiene acceso: Cualquiera con el enlace.
+   6. Implementar → autorizá los permisos → copiá la URL /exec.
+   7. Pegá esa URL en la constante BACKEND_URL de index.html (o, si la dejás
+      vacía, en la app → Ajustes → Conexión).
+   8. Abrí la app y definí tu clave. Hacelo apenas despliegues: hasta que exista
+      una clave, el backend acepta cualquier pedido.
 
    AL ACTUALIZAR EL CÓDIGO (cada fase nueva): pegá el código, guardá y andá a
    Implementar → Administrar implementaciones → ✏️ (editar) → Versión: Nueva
@@ -22,9 +23,12 @@
 
    SEGURIDAD: la app se publica como "Cualquiera con el enlace" porque el fetch
    del navegador desde GitHub Pages no puede autenticarse con tu cuenta. Por eso
-   toda acción exige un token compartido, guardado en las Propiedades del script
-   (nunca en este archivo, que sí va al repo público). Sin el token, la URL no
-   devuelve datos.
+   toda acción exige tu CLAVE, que escribís una sola vez por dispositivo. El
+   navegador manda su SHA-256 (el texto plano nunca viaja ni se guarda) y acá se
+   compara contra el hash guardado en las Propiedades del script, nunca en este
+   archivo ni en la planilla. Sin la clave, la URL no devuelve datos.
+   Si la olvidás: ejecutá `resetearClave()` desde este editor y definí una nueva
+   desde la app.
 
    IMPORTANTE: al agregar columnas en fases futuras, agregarlas SIEMPRE
    al final del array de columnas. Nunca reordenar.
@@ -32,7 +36,7 @@
 
 /* Versión del proyecto. Se sube en cada cambio, acá y en index.html / sw.js, para
    poder ver desde la app si el backend publicado está al día. */
-const VERSION = "11.0";
+const VERSION = "11.1";
 
 const CUENTAS_SHEET = "Cuentas";
 const CONFIG_SHEET  = "Config";
@@ -74,31 +78,67 @@ function ahoraAR() {
   return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd HH:mm:ss");
 }
 
-/* ───────── Token ─────────
-   Vive en las Propiedades del script, no en el código. Para verlo o cambiarlo:
-   Configuración del proyecto ⚙ → Propiedades del script.                      */
-const TOKEN_KEY = "MF_TOKEN";
+/* ───────── Clave ─────────
+   Guardamos el SHA-256 de tu clave en las Propiedades del script, no en el
+   código ni en la planilla. Para verlo o borrarlo a mano:
+   Configuración del proyecto ⚙ → Propiedades del script.
 
-function getToken() {
-  return String(PropertiesService.getScriptProperties().getProperty(TOKEN_KEY) || "").trim();
-}
+   Cada intento fallido tarda más que el anterior, pero la clave correcta entra
+   siempre: como la URL es pública, un bloqueo total permitiría que un tercero
+   te deje afuera a propósito.                                                 */
+const CLAVE_KEY      = "MF_CLAVE_HASH";
+const INTENTOS_KEY   = "MF_INTENTOS";
+const DEMORA_BASE_MS = 400;
+const DEMORA_MAX_MS  = 5000;
+const ACCIONES_PUBLICAS = { estado: true, setClave: true };
 
-/** Ejecutar UNA vez desde el editor: genera el token y lo deja en el registro. */
-function generarToken() {
-  const t = Utilities.getUuid().replace(/-/g, "");
-  PropertiesService.getScriptProperties().setProperty(TOKEN_KEY, t);
-  Logger.log("Token de Mis Finanzas (pegalo en Ajustes → Conexión):\n" + t);
-  return t;
+function props_() { return PropertiesService.getScriptProperties(); }
+
+function getClaveHash() {
+  return String(props_().getProperty(CLAVE_KEY) || "").trim();
 }
 
 /** Compara sin cortar en la primera diferencia. */
-function tokenValido(recibido) {
-  const esperado = getToken();
-  const a = String(recibido || "");
-  if (!esperado || a.length !== esperado.length) return false;
+function claveValida(recibida) {
+  const esperada = getClaveHash();
+  const a = String(recibida || "");
+  if (!esperada || a.length !== esperada.length) return false;
   let dif = 0;
-  for (let i = 0; i < esperado.length; i++) dif |= a.charCodeAt(i) ^ esperado.charCodeAt(i);
+  for (let i = 0; i < esperada.length; i++) dif |= a.charCodeAt(i) ^ esperada.charCodeAt(i);
   return dif === 0;
+}
+
+function verificarClave(data) {
+  if (!getClaveHash()) return { ok:true };          // todavía sin clave: modo abierto
+  const p = props_();
+  if (claveValida(data.clave)) {                    // la correcta entra siempre
+    if (Number(p.getProperty(INTENTOS_KEY) || 0)) p.setProperty(INTENTOS_KEY, "0");
+    return { ok:true };
+  }
+  const n = Number(p.getProperty(INTENTOS_KEY) || 0) + 1;
+  p.setProperty(INTENTOS_KEY, String(n));
+  Utilities.sleep(Math.min(DEMORA_MAX_MS, DEMORA_BASE_MS * n));
+  return { ok:false, error:"CLAVE_INVALIDA", fallidos:n };
+}
+
+/** Definir la clave la primera vez, o cambiarla sabiendo la actual. */
+function setClave(data) {
+  if (getClaveHash()) {
+    const chk = verificarClave(data);
+    if (!chk.ok) return chk;
+  }
+  const nueva = String(data.nuevaHash || "");
+  if (!/^[0-9a-f]{64}$/.test(nueva)) return { ok:false, error:"Hash de clave inválido" };
+  props_().setProperties({ [CLAVE_KEY]: nueva, [INTENTOS_KEY]: "0" });
+  return { ok:true };
+}
+
+/** Ejecutala a mano desde el editor si olvidaste la clave. */
+function resetearClave() {
+  props_().deleteProperty(CLAVE_KEY);
+  props_().deleteProperty(INTENTOS_KEY);
+  Logger.log("Clave borrada. Abrí la app y definí una nueva.");
+  return "Clave borrada. Abrí la app y definí una nueva.";
 }
 
 /* ───────── Routing ───────── */
@@ -122,21 +162,23 @@ function doGet(e) {
     ok: true,
     msg: "Mis Finanzas API activa",
     version: VERSION,
-    auth: "token",
-    tokenConfigurado: !!getToken()
+    auth: "clave",
+    claveConfigurada: !!getClaveHash()
   });
 }
 
 function handleAction(data) {
-  if (!getToken()) {
-    return { ok:false, error:"El backend no tiene token configurado. Ejecutá la función generarToken() desde el editor de Apps Script." };
-  }
-  if (!tokenValido(data.token)) {
-    return { ok:false, error:"Token inválido. Revisá Ajustes → Conexión." };
+  if (!ACCIONES_PUBLICAS[data.action]) {
+    const chk = verificarClave(data);
+    if (!chk.ok) return chk;
   }
 
   switch (data.action) {
     case "ping":         return { ok:true, msg:"pong" };
+
+    /* Seguridad */
+    case "estado":       return { ok:true, version:VERSION, tieneClave: !!getClaveHash() };
+    case "setClave":     return setClave(data);
 
     /* Un request para todo */
     case "bootstrap":    return handleBootstrap();

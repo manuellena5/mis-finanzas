@@ -368,8 +368,14 @@ input.f:focus,select.f:focus{outline:none;border-color:var(--green)}
    tres lados — acá, en sw.js (nombre del cache) y en Code.gs (const VERSION).
    La app compara la suya con la que publica el backend, así se ve de un vistazo
    si falta pushear el front o re-deployar el Apps Script. */
-const APP_VERSION = "11.0";
-const APP_FECHA   = "2026-09-11";
+const APP_VERSION = "11.1";
+const APP_FECHA   = "2026-10-03";
+
+/* URL /exec del Apps Script. Si la dejás acá, lo único que escribís en cada
+   dispositivo es la clave. Que sea pública no alcanza para entrar: el backend
+   rechaza todo pedido que no traiga la clave. Vacía = se carga desde Ajustes. */
+const BACKEND_URL = "";
+const CLAVE_SALT  = "mis-finanzas::v1";   // no es secreto: evita hashes genéricos
 const TABS = [
   {id:"resumen",     label:"Resumen",     ic:"📊", fase:4},
   {id:"movimientos", label:"Movimientos", ic:"💸", fase:2},
@@ -427,8 +433,9 @@ const BROKERS_SUGERIDOS = ["Balanz", "PPI"];
 
 /* ══════════════════════ ESTADO ══════════════════════ */
 const state = {
-  url:      localStorage.getItem("mf_url") || "",
-  token:    localStorage.getItem("mf_token") || "",       // token compartido del backend
+  url:      BACKEND_URL || localStorage.getItem("mf_url") || "",
+  clave:    localStorage.getItem("mf_clave") || "",       // hash de tu clave, nunca el texto
+  backendTieneClave: null,                                // null = todavía no preguntamos
   cur:      localStorage.getItem("mf_cur") || "ARS",          // ARS | USD | ambas
   mep:      JSON.parse(localStorage.getItem("mf_mep") || "null"), // {compra,venta,fecha,fuente,manual}
   tab:      localStorage.getItem("mf_tab") || "resumen",
@@ -1333,16 +1340,39 @@ function renderMep(){
   }
 }
 
+/* ══════════════════════ CLAVE ══════════════════════ */
+/* El texto de la clave nunca sale del navegador: se manda y se guarda su SHA-256. */
+async function hashClave(clave){
+  if(!(window.crypto && crypto.subtle))
+    throw new Error("Este navegador no puede cifrar la clave. Abrí la app por https, no como archivo local.");
+  const datos = new TextEncoder().encode(CLAVE_SALT + "|" + clave);
+  const buf = await crypto.subtle.digest("SHA-256", datos);
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+function guardarClave(hash){ state.clave = hash; localStorage.setItem("mf_clave", hash); }
+function olvidarClave(){ state.clave = ""; localStorage.removeItem("mf_clave"); }
+
+/* ¿El backend ya tiene clave definida? Es la única acción que no la pide. */
+async function estadoBackend(){
+  if(!state.url) return null;
+  try{
+    const d = await api({action:"estado"});
+    state.backendTieneClave = !!d.tieneClave;
+    return d;
+  }catch(e){ return null; }
+}
+
 /* ══════════════════════ API ══════════════════════ */
 async function api(payload){
   if(!state.url) throw new Error("Falta configurar la URL del backend en Ajustes.");
-  if(!state.token) throw new Error("Falta el token del backend en Ajustes.");
+  if(!state.clave && payload.action !== "estado" && payload.action !== "setClave")
+    throw new Error("Falta tu clave. Escribila en Ajustes → Conexión.");
   const res = await fetch(state.url, {
     method: "POST",
     // text/plain evita el preflight CORS con Apps Script
     headers: {"Content-Type":"text/plain;charset=utf-8"},
-    // el token viaja en el cuerpo, nunca en la URL (no queda en logs ni historial)
-    body: JSON.stringify({...payload, token: state.token})
+    // la clave viaja en el cuerpo, nunca en la URL (no queda en logs ni historial)
+    body: JSON.stringify({...payload, clave: state.clave})
   });
   const txt = await res.text();
   let data;
@@ -1350,7 +1380,16 @@ async function api(payload){
   catch(e){
     throw new Error("El backend no devolvió JSON. Verificá que la URL termine en /exec y que la implementación tenga acceso 'Cualquiera con el enlace'.");
   }
-  if(!data.ok) throw new Error(data.error || "Error del servidor");
+  if(!data.ok){
+    if(data.error === "CLAVE_INVALIDA"){
+      olvidarClave();                      // que la vuelva a escribir, no se reintenta sola
+      state.backendTieneClave = true;
+      const e = new Error("Clave incorrecta." + (data.fallidos >= 3 ? " Después de varios intentos fallidos cada uno tarda más." : ""));
+      e.claveInvalida = true;
+      throw e;
+    }
+    throw new Error(data.error || "Error del servidor");
+  }
   return data;
 }
 
@@ -1444,7 +1483,7 @@ function catsPara(tipo){
 }
 
 async function bootstrap(silent){
-  if(!state.url || !state.token){ state.conectado = false; render(); return false; }
+  if(!state.url || !state.clave){ state.conectado = false; render(); return false; }
   state.cargando = true; state.error = ""; render();
   try{
     const d = await api({action:"bootstrap"});
@@ -1497,7 +1536,7 @@ function renderCurToggle(){
 function renderBrandSub(){
   const s = $("#brandSub");
   let txt;
-  if(!state.url || !state.token) txt = "sin conectar";
+  if(!state.url || !state.clave) txt = "sin conectar";
   else if(state.cargando) txt = "cargando…";
   else if(state.conectado){ const n = cuentasActivas().length; txt = n + (n === 1 ? " cuenta" : " cuentas"); }
   else txt = "sin conexión";
@@ -3846,6 +3885,48 @@ async function aplicarReglasPendientes(btn){
 }
 
 /* ── Alta / edición de movimiento ── */
+/* Cambiar la clave: pide la actual, que valida el backend. */
+function openCambiarClave(){
+  $("#modalRoot").innerHTML = `
+  <div class="overlay" id="ovClave">
+    <div class="modal">
+      <button class="close" id="kClose">×</button>
+      <h3>Cambiar clave</h3>
+      <p class="hint">Los otros dispositivos van a pedirte la nueva la próxima vez que abran.</p>
+      <label class="f" for="kAct">Clave actual</label>
+      <input class="f" id="kAct" type="password" autocomplete="current-password" spellcheck="false">
+      <label class="f" for="kNew">Clave nueva</label>
+      <input class="f" id="kNew" type="password" autocomplete="new-password" spellcheck="false">
+      <label class="f" for="kNew2">Repetí la nueva</label>
+      <input class="f" id="kNew2" type="password" autocomplete="new-password" spellcheck="false">
+      <div class="btn-row"><button class="btn primary sm" id="kOk">Cambiar</button></div>
+    </div>
+  </div>`;
+  const cerrar = () => { $("#modalRoot").innerHTML = ""; };
+  $("#kClose").onclick = cerrar;
+  $("#ovClave").onclick = e => { if(e.target.id === "ovClave") cerrar(); };
+  $("#kOk").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    const act = $("#kAct").value, nue = $("#kNew").value;
+    if(nue.length < 6){ toast("La clave nueva tiene que tener al menos 6 caracteres"); return; }
+    if(nue !== $("#kNew2").value){ toast("Las dos claves nuevas no coinciden"); return; }
+    b.disabled = true; b.textContent = "Cambiando…";
+    const previa = state.clave;
+    try{
+      const hAct = await hashClave(act), hNue = await hashClave(nue);
+      state.clave = hAct;                            // el backend valida la actual
+      await api({action:"setClave", nuevaHash:hNue});
+      guardarClave(hNue);
+      cerrar(); render(); toast("Clave cambiada");
+    }catch(e){
+      state.clave = previa;                          // equivocarse no te cierra la sesión
+      localStorage.setItem("mf_clave", previa);
+      b.disabled = false; b.textContent = "Cambiar";
+      toast(e.claveInvalida ? "La clave actual no es correcta" : e.message);
+    }
+  };
+}
+
 function modalMovimiento(id){
   const m = id ? state.movimientos.find(x => x.id === id) : null;
   if(!cuentasActivas().length){ toast("Primero creá una cuenta activa en Ajustes"); return; }
@@ -4174,22 +4255,34 @@ function viewAjustes(){
 }
 
 function cardConexion(){
-  let status = `<div class="status">Pegá la URL <b>/exec</b> y el token de tu Apps Script para conectar la app con tu planilla.</div>`;
+  const definir = state.backendTieneClave === false;   // el backend todavía no tiene clave
+  let status = `<div class="status">${BACKEND_URL ? "Escribí tu clave para entrar." : "Pegá la URL <b>/exec</b> de tu Apps Script y escribí tu clave."}</div>`;
   if(state.cargando)       status = `<div class="status">Conectando…</div>`;
   else if(state.conectado) status = `<div class="status ok">Conectado · ${cuentasActivas().length} ${cuentasActivas().length===1?"cuenta":"cuentas"}</div>`;
   else if(state.error)     status = `<div class="status err">${esc(state.error)}</div>`;
   return `
   <div class="card">
-    <div class="card-head"><h3>Conexión</h3>${state.token ? `<span class="tag ok">con token</span>` : `<span class="tag off">sin token</span>`}</div>
-    <p class="hint">Google Apps Script publicado como aplicación web (termina en <code>/exec</code>).</p>
-    <input class="f" id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(state.url)}">
-    <label class="f" for="cfgToken">Token</label>
-    <input class="f" id="cfgToken" type="password" autocomplete="off" spellcheck="false" placeholder="el que devolvió generarToken()" value="${esc(state.token)}">
-    <p class="hint" style="margin:6px 0 0">Sin el token la URL no devuelve datos. Queda guardado sólo en este navegador.</p>
-    <div class="btn-row">
-      <button class="btn primary sm" id="btnConectar">Guardar y conectar</button>
-      <button class="btn ghost sm" id="btnProbar">Probar conexión</button>
-    </div>
+    <div class="card-head"><h3>Conexión</h3>${state.clave ? `<span class="tag ok">con clave</span>` : `<span class="tag off">sin clave</span>`}</div>
+    ${BACKEND_URL ? `<p class="hint">Backend fijado en el archivo. Lo único que se escribe acá es la clave.</p>`
+      : `<p class="hint">Google Apps Script publicado como aplicación web (termina en <code>/exec</code>).</p>
+         <input class="f" id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(state.url)}">`}
+    ${definir ? `
+      <div class="status">Todavía no definiste una clave. Elegí una ahora: hasta que exista, cualquiera con la URL puede ver tus datos.</div>
+      <label class="f" for="cfgClave">Clave nueva</label>
+      <input class="f" id="cfgClave" type="password" autocomplete="new-password" spellcheck="false" placeholder="mínimo 6 caracteres">
+      <label class="f" for="cfgClave2">Repetila</label>
+      <input class="f" id="cfgClave2" type="password" autocomplete="new-password" spellcheck="false" placeholder="otra vez">
+      <div class="btn-row"><button class="btn primary sm" id="btnDefinirClave">Guardar clave y conectar</button></div>`
+    : `
+      <label class="f" for="cfgClave">Clave</label>
+      <input class="f" id="cfgClave" type="password" autocomplete="current-password" spellcheck="false" placeholder="${state.clave ? "guardada en este dispositivo" : "tu clave"}">
+      <p class="hint" style="margin:6px 0 0">Se escribe una vez por dispositivo. Viaja cifrada y se valida en el backend: sin ella la URL no devuelve nada.</p>
+      <div class="btn-row">
+        <button class="btn primary sm" id="btnConectar">${state.clave ? "Reconectar" : "Entrar"}</button>
+        <button class="btn ghost sm" id="btnProbar">Probar conexión</button>
+        ${state.clave ? `<button class="btn ghost sm" id="btnCambiarClave">Cambiar clave</button>
+                         <button class="btn ghost sm" id="btnSalirClave">Olvidar en este dispositivo</button>` : ""}
+      </div>`}
     ${status}
   </div>`;
 }
@@ -4791,31 +4884,66 @@ async function cargarReglasSugeridas(btn){
 }
 
 function bindAjustes(){
-  const url = $("#cfgUrl");
-  const tok = $("#cfgToken");
+  const url = $("#cfgUrl");          // no existe si la URL viene fija del archivo
+  const cla = $("#cfgClave");
 
-  // Toma URL + token de los inputs; false si falta alguno.
-  function tomarCredenciales(){
-    const u = url.value.trim();
-    if(!u){ toast("Pegá la URL del Apps Script"); url.focus(); return false; }
-    const t = tok.value.trim();
-    if(!t){ toast("Pegá el token del backend"); tok.focus(); return false; }
-    state.url = u; state.token = t;
+  // Toma URL + clave de los inputs; false si falta alguna.
+  async function tomarCredenciales(){
+    if(url){
+      const u = url.value.trim();
+      if(!u){ toast("Pegá la URL del Apps Script"); url.focus(); return false; }
+      state.url = u;
+    }
+    if(!state.url){ toast("Falta la URL del backend"); return false; }
+    const txt = cla ? cla.value : "";
+    if(txt){ guardarClave(await hashClave(txt)); }
+    else if(!state.clave){ toast("Escribí tu clave"); if(cla) cla.focus(); return false; }
     return true;
   }
 
-  $("#btnConectar").onclick = async () => {
-    if(!tomarCredenciales()) return;
-    localStorage.setItem("mf_url", state.url);
-    localStorage.setItem("mf_token", state.token);
-    await bootstrap(false);
+  const btnConectar = $("#btnConectar");
+  if(btnConectar) btnConectar.onclick = async () => {
+    try{
+      if(!await tomarCredenciales()) return;
+      if(url) localStorage.setItem("mf_url", state.url);
+      await bootstrap(false);
+    }catch(e){ toast(e.message); }
   };
 
-  $("#btnProbar").onclick = async (ev) => {
-    const b = ev.currentTarget, prev = b.textContent;
-    if(!tomarCredenciales()) return;
-    b.disabled = true; b.textContent = "Probando…";
+  const btnDefinir = $("#btnDefinirClave");
+  if(btnDefinir) btnDefinir.onclick = async (ev) => {
+    const b = ev.currentTarget;
     try{
+      if(url){ const u = url.value.trim(); if(!u){ toast("Pegá la URL del Apps Script"); return; } state.url = u; localStorage.setItem("mf_url", u); }
+      const c1 = $("#cfgClave").value, c2 = $("#cfgClave2").value;
+      if(c1.length < 6){ toast("La clave tiene que tener al menos 6 caracteres"); return; }
+      if(c1 !== c2){ toast("Las dos claves no coinciden"); return; }
+      b.disabled = true; b.textContent = "Guardando…";
+      const h = await hashClave(c1);
+      await api({action:"setClave", nuevaHash:h});
+      guardarClave(h);
+      state.backendTieneClave = true;
+      toast("Clave guardada");
+      await bootstrap(true);
+    }catch(e){ toast(e.message); }
+    b.disabled = false; b.textContent = "Guardar clave y conectar";
+  };
+
+  const btnCambiar = $("#btnCambiarClave");
+  if(btnCambiar) btnCambiar.onclick = () => openCambiarClave();
+
+  const btnSalir = $("#btnSalirClave");
+  if(btnSalir) btnSalir.onclick = () => {
+    if(!confirm("Vas a tener que volver a escribir la clave en este dispositivo. ¿Seguimos?")) return;
+    olvidarClave(); state.conectado = false; state.error = ""; render();
+  };
+
+  const btnProbar = $("#btnProbar");
+  if(btnProbar) btnProbar.onclick = async (ev) => {
+    const b = ev.currentTarget, prev = b.textContent;
+    try{
+      if(!await tomarCredenciales()) return;
+      b.disabled = true; b.textContent = "Probando…";
       const d = await api({action:"bootstrap"});
       toast("Conexión OK · " + (d.cuentas || []).length + " cuentas");
     }catch(e){ toast(e.message); }
@@ -5007,7 +5135,11 @@ $("#mepChip").onclick = () => fetchMep(false);
   render();
   // La cotización manual manda: no la pisamos con la online.
   if(!(state.mep && state.mep.manual)) fetchMep(true);
-  if(state.url && state.token) bootstrap(true);
+  if(!state.url) return;
+  if(state.clave){ await bootstrap(true); return; }
+  // Sin clave guardada: preguntamos si el backend ya tiene una, para pedirla o definirla.
+  await estadoBackend();
+  render();
 })();
 
 /* PWA */

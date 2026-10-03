@@ -1,5 +1,17 @@
 # Changelog
 
+## 11.1 — Entrar con una clave en lugar de un token (2026-10-03) ✅
+
+Se reemplaza el token compartido por una **clave tuya**, que escribís una sola vez por dispositivo y queda guardada.
+
+- El texto de la clave **nunca sale del navegador**: se manda y se guarda su SHA-256 con salt. El backend compara ese hash, en tiempo constante, contra el que tiene en las **Propiedades del script**. No está en `Code.gs` ni en la planilla.
+- Nueva constante **`BACKEND_URL`** en `index.html`: si pegás ahí tu URL `/exec`, lo único que se escribe en cada dispositivo es la clave. Vacía, se sigue cargando desde Ajustes como antes.
+- **Ajustes → Conexión** define la clave la primera vez, la cambia (pidiendo la actual) o la olvida en ese dispositivo. Equivocarse al cambiarla no te cierra la sesión.
+- Ante una clave equivocada la demora **crece** (400 ms por intento, tope 5 s), pero **la correcta entra siempre**: con la URL pública, un bloqueo total dejaría que un tercero te deje afuera a vos.
+- Si la olvidás: `resetearClave()` desde el editor de Apps Script.
+
+`generarToken()` y `tokenValido()` desaparecen. Después de desplegar se puede borrar la propiedad `MF_TOKEN`. **Hay que re-deployar el Apps Script** (versión nueva sobre la implementación existente).
+
 ## Fase 11 — Posición de broker: efectivo + tenencias (PPI y Balanz) (2026-09-11) ✅
 
 Un PDF del broker actualiza de una sola pasada **las dos partes** de lo que tenés ahí, sin doble conteo:

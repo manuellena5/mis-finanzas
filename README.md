@@ -48,21 +48,25 @@ Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle de cada fase.
 1. Creá una **planilla nueva** en [sheets.google.com](https://sheets.google.com) (será la base de datos).
 2. En la planilla: **Extensiones → Apps Script**.
 3. Borrá el código de ejemplo, pegá el contenido de **`Code.gs`** y guardá (Ctrl+S).
-4. En el selector de funciones elegí **`generarToken`** y tocá **Ejecutar**. Autorizá los permisos y copiá el token que aparece en el **registro de ejecución**.
-5. **Implementar → Nueva implementación** → ⚙ tipo **Aplicación web**.
-6. *Ejecutar como*: **Yo**. *Quién tiene acceso*: **Cualquiera con el enlace** (necesario para abrirla desde el celular sin loguearte).
-7. **Implementar** → copiá la **URL** que termina en `/exec`.
-8. En la app: **Ajustes → Conexión**, pegá la URL y el token, y tocá **Guardar y conectar**.
+4. **Implementar → Nueva implementación** → ⚙ tipo **Aplicación web**.
+5. *Ejecutar como*: **Yo**. *Quién tiene acceso*: **Cualquiera con el enlace** (necesario para abrirla desde el celular sin loguearte).
+6. **Implementar** → autorizá los permisos → copiá la **URL** que termina en `/exec`.
+7. Pegá esa URL en la constante `BACKEND_URL`, arriba de todo del `<script>` de `index.html`:
+   ```js
+   const BACKEND_URL = "https://script.google.com/macros/s/…/exec";
+   ```
+   Si preferís no tocar el archivo, dejala vacía y la pegás en **Ajustes → Conexión**; la diferencia es que en cada dispositivo nuevo vas a tener que escribir la URL además de la clave.
+8. Abrí la app y **definí tu clave**. Hacelo apenas despliegues: hasta que exista una clave, cualquiera con la URL puede ver tus datos.
 
 Las hojas (`Cuentas`, `Categorias`, `ModosPago`, `Movimientos`, `Inversiones`, `Reglas`, `Config`) se crean solas la primera vez, con sus encabezados.
 
-La URL y el token se guardan en el `localStorage` del navegador: no viajan al repo ni quedan hardcodeados.
+La clave se escribe **una sola vez por dispositivo** y queda en el `localStorage` de ese navegador, hasheada.
 
 ### Al actualizar el backend (cada fase nueva)
 
 Pegá el código, guardá, y después **Implementar → Administrar implementaciones → ✏️ editar → Versión: Nueva versión → Implementar**. Así la URL `/exec` sigue siendo la misma.
 
-Si en cambio creás una *implementación nueva*, te da otra URL y la vieja sigue sirviendo el código viejo — el síntoma típico es un error tipo `Accion desconocida: bootstrap`. Para saber qué versión está publicada, abrí tu URL `/exec` en el navegador: el JSON de salud dice `version` y `tokenConfigurado`.
+Si en cambio creás una *implementación nueva*, te da otra URL y la vieja sigue sirviendo el código viejo — el síntoma típico es un error tipo `Accion desconocida: bootstrap`. Para saber qué versión está publicada, abrí tu URL `/exec` en el navegador: el JSON de salud dice `version` y `claveConfigurada`.
 
 ## Fechas y zona horaria
 
@@ -78,10 +82,16 @@ Si ya tenías movimientos cargados con el formato viejo en UTC, ejecutá **una v
 
 La app se publica como *Cualquiera con el enlace* porque el `fetch` del navegador desde GitHub Pages no puede autenticarse con tu cuenta de Google (sin sesión de origen cruzado, CORS lo bloquea). Para que la URL sola no alcance:
 
-- Toda acción exige un **token compartido**, guardado en las **Propiedades del script** (⚙ Configuración del proyecto). Nunca está en `Code.gs`, así que no viaja al repo público.
-- El token va en el **cuerpo** del POST, nunca en la URL: no queda en historiales ni en logs de referer.
-- Si falta el token en el backend, se rechaza todo (falla cerrado). El único endpoint abierto es el chequeo de salud de `doGet`, que no devuelve datos.
-- Si el token se filtra, corré `generarToken()` de nuevo: invalida el anterior al instante.
+- Toda acción exige **tu clave**, que escribís una sola vez por dispositivo.
+- La clave **nunca viaja ni se guarda en texto plano**: el navegador calcula su SHA-256 (con un salt fijo) y manda ese hash. El backend lo compara, en tiempo constante, contra el hash guardado en las **Propiedades del script** (⚙ Configuración del proyecto). No está en `Code.gs` ni en la planilla, así que no viaja al repo público ni sale en una exportación de la hoja.
+- La clave va en el **cuerpo** del POST, nunca en la URL: no queda en historiales ni en logs de referer.
+- Cada intento fallido **tarda más que el anterior** (hasta 5 segundos), pero **la clave correcta entra siempre**. No hay bloqueo total a propósito: como la URL es pública, cualquiera podría fallar la clave adrede para dejarte afuera a vos.
+- En **Ajustes → Conexión** podés cambiar la clave (te pide la actual) u olvidarla en ese dispositivo. Al cambiarla, los demás dispositivos piden la nueva la próxima vez que abran.
+- Si la olvidás, ejecutá **`resetearClave()`** desde el editor de Apps Script y definí una nueva desde la app.
+
+La URL `/exec` no puede guardarse del lado del servidor: el navegador necesita conocerla para hacer el primer pedido. Con la clave validándose en el backend igual dejó de ser un secreto — es una dirección, no una credencial.
+
+> Si venías de la versión con token, después de desplegar podés borrar la propiedad `MF_TOKEN` del script: ya no se usa.
 
 Alternativa más fuerte, para más adelante: login con Google Identity Services en el frontend y verificación del `id_token` (y de tu email) en el backend. Requiere proyecto de GCP, client ID y orígenes autorizados.
 
